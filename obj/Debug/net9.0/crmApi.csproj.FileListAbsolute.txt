@@ -50,3 +50,5 @@ C:\Users\DELL\Desktop\dotnet\crmApi\obj\Debug\net9.0\refint\crmApi.dll
 C:\Users\DELL\Desktop\dotnet\crmApi\obj\Debug\net9.0\crmApi.pdb
 C:\Users\DELL\Desktop\dotnet\crmApi\obj\Debug\net9.0\crmApi.genruntimeconfig.cache
 C:\Users\DELL\Desktop\dotnet\crmApi\obj\Debug\net9.0\ref\crmApi.dll
+C:\Users\DELL\Desktop\dotnet\crmApi\obj\Debug\net9.0\crmApi.sourcelink.json
+C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\crmApi.staticwebassets.runtime.json
