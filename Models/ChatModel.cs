@@ -8,22 +8,22 @@ namespace crmApi.Models
     {
         [Key]
         public int Id { get; set; }
-        
+
         [Required]
         [MaxLength(200)]
         public string Title { get; set; }
-        
+
         public string Description { get; set; }
-        
+
         public byte Status { get; set; } = 0;
-        
+
         [Required]
         public int CreatedByUserId { get; set; }
-        
+
         public DateTime CreatedAt { get; set; } = DateTime.Now;
-        
+
         public int? UpdatedByUserId { get; set; }
-        
+
         public DateTime? UpdatedAt { get; set; }
     }
 
@@ -31,17 +31,17 @@ namespace crmApi.Models
     {
         [Key]
         public int Id { get; set; }
-        
+
         [Required]
         public int DiscussionId { get; set; }
-        
+
         [Required]
         public int UserId { get; set; }
-        
+
         public byte Role { get; set; } = 0;
-        
+
         public DateTime JoinedAt { get; set; } = DateTime.Now;
-        
+
         public int JoinedByUserId { get; set; }
     }
 
@@ -49,24 +49,24 @@ namespace crmApi.Models
     {
         [Key]
         public int Id { get; set; }
-        
+
         [Required]
         public int DiscussionId { get; set; }
-        
+
         [Required]
         public int SenderId { get; set; }
-        
+
         public int? ReceiverId { get; set; }
-        
+
         [Required]
         public string Content { get; set; }
-        
+
         public byte MessageType { get; set; } = 0;
-        
+
         public bool IsEdited { get; set; } = false;
-        
+
         public DateTime? EditedAt { get; set; }
-        
+
         public DateTime CreatedAt { get; set; } = DateTime.Now;
     }
 
@@ -74,28 +74,28 @@ namespace crmApi.Models
     {
         [Key]
         public int Id { get; set; }
-        
+
         [Required]
         public int MessageId { get; set; }
-        
+
         [Required]
         [MaxLength(255)]
         public string FileName { get; set; }
-        
+
         [Required]
         [MaxLength(255)]
         public string OriginalFileName { get; set; }
-        
+
         public long FileSize { get; set; }
-        
+
         [Required]
         [MaxLength(100)]
         public string MimeType { get; set; }
-        
+
         [Required]
         [MaxLength(500)]
         public string FilePath { get; set; }
-        
+
         public DateTime UploadedAt { get; set; } = DateTime.Now;
     }
 
@@ -121,14 +121,27 @@ namespace crmApi.Models
         public int Id { get; set; }
         public int DiscussionId { get; set; }
         public int SenderId { get; set; }
-        public string SenderName { get; set; }
+        public string? SenderName { get; set; }
         public int? ReceiverId { get; set; }
-        public string ReceiverName { get; set; }
+        public string? ReceiverName { get; set; }
         public string Content { get; set; }
         public byte MessageType { get; set; }
         public bool IsEdited { get; set; }
         public int? DocumentId { get; set; }
+        public bool HasFile { get; set; }
+        public string FileName { get; set; }
+        public long FileSize { get; set; }
+        public string MimeType { get; set; }
         public string FileReference { get; set; }
+        public int? Duration { get; set; }
+        public int? TaskId { get; set; }
+        public string TaskTitle { get; set; }
+        public string TaskDescription { get; set; }
+        public TaskStatus? TaskStatus { get; set; }
+        public TaskPriority? TaskPriority { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string EstimatedTime { get; set; }
+        public List<int> AssignedUserIds { get; set; }
         public DateTime? EditedAt { get; set; }
         public DateTime CreatedAt { get; set; }
     }
@@ -146,4 +159,70 @@ namespace crmApi.Models
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
     }
+
+    public class CreateTaskMessageDto
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string TaskTitle { get; set; }
+        public string TaskDescription { get; set; }
+        public TaskStatus TaskStatus { get; set; } = TaskStatus.Todo;
+        public TaskPriority TaskPriority { get; set; } = TaskPriority.Medium;
+        public DateTime? DueDate { get; set; }
+        public string EstimatedTime { get; set; }
+        public byte MessageType { get; set; } = 4;
+        public string Content { get; set; }
+        public List<int> AssignedUserIds { get; set; } = new List<int>();
+    }
+
+    public class TaskMessageResponse : MessageResponse
+    {
+        public int? TaskId { get; set; }
+        public string TaskTitle { get; set; }
+        public string TaskDescription { get; set; }
+        public TaskStatus? TaskStatus { get; set; }
+        public TaskPriority? TaskPriority { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string EstimatedTime { get; set; }
+        public List<int> AssignedUserIds { get; set; }
+    }
+
+    public class UpdateTaskStatusInChatDto
+    {
+        public TaskStatus Status { get; set; }
+        public int UpdatedByUserId { get; set; }
+    }
+    
+    public enum MessageType
+    {
+        Text = 1,
+        File = 2,
+        Voice = 3,
+        Task = 4
+    }
+
+    
+    public class ChatMessageWithTaskDto
+    {
+        public int Id { get; set; }
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; }
+        public MessageType MessageType { get; set; }
+        public string FileReference { get; set; }
+        public int? TaskId { get; set; }
+        public bool IsEdited { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public string SenderName { get; set; }
+
+        public string TaskTitle { get; set; }
+        public string TaskDescription { get; set; }
+        public TaskStatus? TaskStatus { get; set; }
+        public TaskPriority? TaskPriority { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string EstimatedTime { get; set; }
+    }
+    
 }

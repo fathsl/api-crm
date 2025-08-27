@@ -64,45 +64,68 @@ namespace crmApi.Controllers
         [HttpGet("discussions/{discussionId}/messages")]
         public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId)
         {
-            var messages = new List<MessageResponse>();
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-
+                
                 string query = @"
-                    SELECT Id, DiscussionId, SenderId, ReceiverId, Content, MessageType, IsEdited, EditedAt, CreatedAt
-                    FROM ChatMessages
-                    WHERE DiscussionId = @discussionId
-                    ORDER BY CreatedAt ASC";
-
+                    SELECT 
+                        m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
+                        m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
+                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize
+                    FROM ChatMessages m
+                    LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
+                    WHERE m.DiscussionId = @discussionId
+                    ORDER BY m.CreatedAt ASC";
+                    
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
-
+                
+                var messages = new List<MessageResponse>();
                 using var reader = await command.ExecuteReaderAsync();
+                
                 while (await reader.ReadAsync())
                 {
-                    messages.Add(new MessageResponse
+                    var fileReference = reader.IsDBNull(reader.GetOrdinal("FileReference")) ? null : reader["FileReference"].ToString();
+                    var duration = reader.IsDBNull(reader.GetOrdinal("Duration")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("Duration"));
+                    
+                    _logger.LogInformation($"Message ID: {reader["Id"]}, MessageType: {reader["MessageType"]}, FileReference exists: {!string.IsNullOrEmpty(fileReference)}, Length: {fileReference?.Length ?? 0}, Duration: {duration}");
+
+                    var message = new MessageResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
                         DiscussionId = Convert.ToInt32(reader["DiscussionId"]),
                         SenderId = Convert.ToInt32(reader["SenderId"]),
                         ReceiverId = reader.IsDBNull(reader.GetOrdinal("ReceiverId")) ? null : reader.GetInt32(reader.GetOrdinal("ReceiverId")),
-                        Content = reader["Content"].ToString() ?? "",
+                        Content = reader["Content"].ToString(),
                         MessageType = Convert.ToByte(reader["MessageType"]),
                         IsEdited = Convert.ToBoolean(reader["IsEdited"]),
-                        EditedAt = reader.IsDBNull(reader.GetOrdinal("EditedAt")) ? null : reader.GetDateTime(reader.GetOrdinal("EditedAt")),
-                        CreatedAt = Convert.ToDateTime(reader["CreatedAt"])
-                    });
+                        CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                        FileReference = fileReference,
+                        Duration = duration,
+                        FileName = reader.IsDBNull(reader.GetOrdinal("OriginalFileName")) ? null : reader["OriginalFileName"].ToString(),
+                        MimeType = reader.IsDBNull(reader.GetOrdinal("MimeType")) ? null : reader["MimeType"].ToString(),
+                        FileSize = reader.IsDBNull(reader.GetOrdinal("FileSize")) ? 0 : Convert.ToInt64(reader["FileSize"])
+                    };
+                    messages.Add(message);
                 }
+                
+                var voiceMessages = messages.Where(m => m.MessageType == 3).ToList();
+                _logger.LogInformation($"Retrieved {messages.Count} total messages, {voiceMessages.Count} voice messages for discussion {discussionId}");
+                
+                foreach (var vm in voiceMessages)
+                {
+                    _logger.LogInformation($"Voice Message ID: {vm.Id}, Duration: {vm.Duration}, FileReference length: {vm.FileReference?.Length ?? 0}");
+                }
+                
+                return Ok(messages);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching messages");
                 return StatusCode(500, new { message = "Error fetching messages", error = ex.Message });
             }
-
-            return Ok(messages);
         }
 
         [HttpPost("discussions")]
@@ -274,14 +297,17 @@ namespace crmApi.Controllers
 
                 if (file != null && file.Length > 0)
                 {
-                    // Convert file to Base64 and store in database
+                    _logger.LogInformation($"Processing file: {file.FileName}, Size: {file.Length}, ContentType: {file.ContentType}");
+
                     using var memoryStream = new MemoryStream();
                     await file.CopyToAsync(memoryStream);
                     var fileBytes = memoryStream.ToArray();
                     var base64String = Convert.ToBase64String(fileBytes);
                     
-                    // Create a data URL
                     fileReference = $"data:{file.ContentType};base64,{base64String}";
+                    
+                    _logger.LogInformation($"Base64 string length: {base64String.Length}");
+                    _logger.LogInformation($"Full data URI length: {fileReference.Length}");
                 }
 
                 string messageQuery = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, FileReference, CreatedAt)
@@ -294,14 +320,13 @@ namespace crmApi.Controllers
                 messageCommand.Parameters.AddWithValue("@receiverId", receiverId ?? (object)DBNull.Value);
                 messageCommand.Parameters.AddWithValue("@content", content);
                 messageCommand.Parameters.AddWithValue("@messageType", messageType);
-                messageCommand.Parameters.AddWithValue("@fileReference", fileReference ?? (object)DBNull.Value);
+                messageCommand.Parameters.AddWithValue("@fileReference", (object)fileReference ?? DBNull.Value);
                 messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                 var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
 
                 if (file != null && file.Length > 0)
                 {
-                    // Store metadata for filename
                     string documentQuery = @"
                         INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, FileSize, MimeType, FilePath, UploadedAt)
                         VALUES (@messageId, @fileName, @originalFileName, @fileSize, @mimeType, @filePath, @uploadedAt);";
@@ -312,13 +337,15 @@ namespace crmApi.Controllers
                     documentCommand.Parameters.AddWithValue("@originalFileName", file.FileName);
                     documentCommand.Parameters.AddWithValue("@fileSize", file.Length);
                     documentCommand.Parameters.AddWithValue("@mimeType", file.ContentType);
-                    documentCommand.Parameters.AddWithValue("@filePath", fileReference);
+                    documentCommand.Parameters.AddWithValue("@filePath", "base64_stored_in_message");
                     documentCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
 
                     await documentCommand.ExecuteNonQueryAsync();
                 }
 
                 await transaction.CommitAsync();
+
+                _logger.LogInformation($"Message saved with ID: {messageId}, FileReference length: {fileReference?.Length ?? 0}");
 
                 return Ok(new MessageResponse
                 {
@@ -340,6 +367,124 @@ namespace crmApi.Controllers
             }
         }
 
+
+        [HttpPost("messages/send-with-voice")]
+        public async Task<ActionResult<MessageResponse>> SendMessageWithVoice([FromForm] int discussionId,
+                                                                            [FromForm] int senderId,
+                                                                            [FromForm] int? receiverId,
+                                                                            [FromForm] string content,
+                                                                            [FromForm] byte messageType,
+                                                                            [FromForm] IFormFile? voiceFile,
+                                                                            [FromForm] int duration)
+        {
+            try
+            {
+                _logger.LogInformation($"Received voice message request: DiscussionId={discussionId}, SenderId={senderId}, Duration={duration}");
+                
+                if (voiceFile == null || voiceFile.Length == 0)
+                {
+                    return BadRequest(new { message = "Voice file is required" });
+                }
+                
+                if (duration <= 0)
+                {
+                    _logger.LogWarning($"Invalid duration received: {duration}");
+                    return BadRequest(new { message = "Invalid duration" });
+                }
+
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                using var transaction = await connection.BeginTransactionAsync();
+
+                string fileReference = null;
+
+                _logger.LogInformation($"Processing voice file: {voiceFile.FileName}, Size: {voiceFile.Length}, ContentType: {voiceFile.ContentType}");
+
+                const int maxFileSizeBytes = 2 * 1024 * 1024;
+                if (voiceFile.Length > maxFileSizeBytes)
+                {
+                    return BadRequest(new { message = "Voice file too large. Maximum 2MB allowed." });
+                }
+
+                var allowedContentTypes = new[] { "audio/wav", "audio/webm", "audio/ogg", "audio/mp3", "audio/mpeg", "audio/m4a" };
+                if (!allowedContentTypes.Contains(voiceFile.ContentType.ToLower()))
+                {
+                    return BadRequest(new { message = "Invalid audio format. Supported formats: WAV, WebM, OGG, MP3, M4A" });
+                }
+
+                using var memoryStream = new MemoryStream();
+                await voiceFile.CopyToAsync(memoryStream);
+                var fileBytes = memoryStream.ToArray();
+                
+                if (fileBytes.Length == 0)
+                {
+                    return BadRequest(new { message = "Empty audio file" });
+                }
+                
+                var base64String = Convert.ToBase64String(fileBytes);
+                fileReference = $"data:{voiceFile.ContentType};base64,{base64String}";
+                
+                _logger.LogInformation($"Voice Base64 string length: {base64String.Length}");
+                _logger.LogInformation($"Full voice data URI length: {fileReference.Length}");
+
+                string messageQuery = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, FileReference, Duration, CreatedAt)
+                                    VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @fileReference, @duration, @createdAt);
+                                    SELECT LAST_INSERT_ID();";
+
+                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                messageCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                messageCommand.Parameters.AddWithValue("@senderId", senderId);
+                messageCommand.Parameters.AddWithValue("@receiverId", receiverId ?? (object)DBNull.Value);
+                messageCommand.Parameters.AddWithValue("@content", content ?? "Voice message");
+                messageCommand.Parameters.AddWithValue("@messageType", messageType);
+                messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
+                messageCommand.Parameters.AddWithValue("@duration", duration);
+                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
+
+                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
+
+                string documentQuery = @"
+                    INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, FileSize, MimeType, FilePath, UploadedAt)
+                    VALUES (@messageId, @fileName, @originalFileName, @fileSize, @mimeType, @filePath, @uploadedAt);";
+
+                using var documentCommand = new MySqlCommand(documentQuery, connection, transaction);
+                documentCommand.Parameters.AddWithValue("@messageId", messageId);
+                documentCommand.Parameters.AddWithValue("@fileName", voiceFile.FileName ?? "voice_message.webm");
+                documentCommand.Parameters.AddWithValue("@originalFileName", voiceFile.FileName ?? "voice_message.webm");
+                documentCommand.Parameters.AddWithValue("@fileSize", voiceFile.Length);
+                documentCommand.Parameters.AddWithValue("@mimeType", voiceFile.ContentType);
+                documentCommand.Parameters.AddWithValue("@filePath", "base64_stored_in_message");
+                documentCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
+
+                await documentCommand.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation($"Voice message saved successfully with ID: {messageId}, Duration: {duration}, FileReference length: {fileReference.Length}");
+
+                return Ok(new MessageResponse
+                {
+                    Id = messageId,
+                    DiscussionId = discussionId,
+                    SenderId = senderId,
+                    ReceiverId = receiverId,
+                    Content = content ?? "Voice message",
+                    MessageType = messageType,
+                    IsEdited = false,
+                    CreatedAt = DateTime.Now,
+                    FileReference = fileReference,
+                    Duration = duration
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending voice message");
+                return StatusCode(500, new { message = "Error sending voice message", error = ex.Message });
+            }
+        }
+
+
+        
 
         [HttpPost("messages/{messageId}/documents")]
         public async Task<ActionResult<MessageResponse>> UploadDocument(int messageId, IFormFile file)
@@ -437,6 +582,85 @@ namespace crmApi.Controllers
             {
                 _logger.LogError(ex, "Error downloading document");
                 return StatusCode(500, new { message = "Error downloading document", error = ex.Message });
+            }
+        }
+
+        [HttpGet("messages/{messageId}/file")]
+        public async Task<IActionResult> GetMessageFile(int messageId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"SELECT FileName, MimeType, FileData FROM FileStorage WHERE MessageId = @messageId";
+                
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@messageId", messageId);
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound("File not found");
+
+                var fileName = reader["FileName"].ToString();
+                var mimeType = reader["MimeType"].ToString();
+                var fileData = (byte[])reader["FileData"];
+
+                return File(fileData, mimeType, fileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving file");
+                return StatusCode(500, new { message = "Error retrieving file", error = ex.Message });
+            }
+        }
+
+        [HttpGet("messages/{messageId}/voice")]
+        public async Task<IActionResult> GetVoiceMessage(int messageId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+            SELECT cm.FileReference, md.FileName, md.MimeType 
+            FROM ChatMessages cm
+            LEFT JOIN MessageDocuments md ON cm.Id = md.MessageId
+            WHERE cm.Id = @messageId AND cm.MessageType = @voiceMessageType";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@messageId", messageId);
+                command.Parameters.AddWithValue("@voiceMessageType", 3);
+
+                using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                    return NotFound("Voice message not found");
+
+                var fileReference = reader["FileReference"]?.ToString();
+                var fileName = reader["FileName"]?.ToString() ?? "voice_message.webm";
+                var mimeType = reader["MimeType"]?.ToString() ?? "audio/webm";
+
+                if (string.IsNullOrEmpty(fileReference) || !fileReference.StartsWith("data:"))
+                    return NotFound("Voice data not found");
+
+                try
+                {
+                    var base64Data = fileReference.Split(',')[1];
+                    var audioBytes = Convert.FromBase64String(base64Data);
+
+                    return File(audioBytes, mimeType, fileName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error decoding voice data");
+                    return StatusCode(500, new { message = "Error processing voice data" });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving voice message");
+                return StatusCode(500, new { message = "Error retrieving voice message", error = ex.Message });
             }
         }
 
