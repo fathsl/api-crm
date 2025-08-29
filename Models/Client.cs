@@ -12,6 +12,8 @@ namespace crmApi.Models
         public string? Email { get; set; }
         public string? Details { get; set; }
         public string? Country { get; set; }
+        public string City { get; set; }
+        public string Address { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public int? CreatedBy { get; set; }
         public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;

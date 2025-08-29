@@ -142,6 +142,8 @@ namespace crmApi.Models
         public DateTime? DueDate { get; set; }
         public string EstimatedTime { get; set; }
         public List<int> AssignedUserIds { get; set; }
+        public List<int> ClientIds { get; set; }
+        public List<int> ProjectIds { get; set; }
         public DateTime? EditedAt { get; set; }
         public DateTime CreatedAt { get; set; }
     }
@@ -158,22 +160,6 @@ namespace crmApi.Models
         public DateTime CreatedAt { get; set; }
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
-    }
-
-    public class CreateTaskMessageDto
-    {
-        public int DiscussionId { get; set; }
-        public int SenderId { get; set; }
-        public int? ReceiverId { get; set; }
-        public string TaskTitle { get; set; }
-        public string TaskDescription { get; set; }
-        public TaskStatus TaskStatus { get; set; } = TaskStatus.Todo;
-        public TaskPriority TaskPriority { get; set; } = TaskPriority.Medium;
-        public DateTime? DueDate { get; set; }
-        public string EstimatedTime { get; set; }
-        public byte MessageType { get; set; } = 4;
-        public string Content { get; set; }
-        public List<int> AssignedUserIds { get; set; } = new List<int>();
     }
 
     public class TaskMessageResponse : MessageResponse
@@ -193,7 +179,7 @@ namespace crmApi.Models
         public TaskStatus Status { get; set; }
         public int UpdatedByUserId { get; set; }
     }
-    
+
     public enum MessageType
     {
         Text = 1,
@@ -202,7 +188,7 @@ namespace crmApi.Models
         Task = 4
     }
 
-    
+
     public class ChatMessageWithTaskDto
     {
         public int Id { get; set; }
@@ -224,5 +210,83 @@ namespace crmApi.Models
         public DateTime? DueDate { get; set; }
         public string EstimatedTime { get; set; }
     }
-    
+
+    public class CreateTaskMessageWithFileDto
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; }
+        public int MessageType { get; set; }
+        public string? TaskTitle { get; set; }
+        public string? TaskDescription { get; set; }
+        public string TaskStatus { get; set; }
+        public string TaskPriority { get; set; }
+        public List<int>? ClientIds { get; set; } = new List<int>();
+        public List<int>? ProjectIds { get; set; } = new List<int>();
+        public DateTime? DueDate { get; set; }
+        public string? EstimatedTime { get; set; }
+        public List<int> AssignedUserIds { get; set; } = new List<int>();
+    }
+
+    public class CreateTaskMessageWithVoiceDto
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; }
+        public int MessageType { get; set; }
+        public string? TaskTitle { get; set; }
+        public string? TaskDescription { get; set; }
+        public string TaskStatus { get; set; }
+        public string TaskPriority { get; set; }
+        public List<int>? ClientIds { get; set; } = new List<int>();
+        public List<int>? ProjectIds { get; set; } = new List<int>();
+        public DateTime? DueDate { get; set; }
+        public string? EstimatedTime { get; set; }
+        public List<int> AssignedUserIds { get; set; } = new List<int>();
+        public int? Duration { get; set; }
+    }
+
+    public class CreateTaskMessageDto
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; }
+        public int MessageType { get; set; }
+        public string? TaskTitle { get; set; }
+        public string? TaskDescription { get; set; }
+        public string TaskStatus { get; set; }
+        public string TaskPriority { get; set; }
+        public List<int>? ClientIds { get; set; } = new List<int>();
+        public List<int>? ProjectIds { get; set; } = new List<int>();
+        public DateTime? DueDate { get; set; }
+        public int? EstimatedTime { get; set; }
+
+        public List<int>? AssignedUserIds { get; set; } = new List<int>();
+    }
+
+    public class TaskDataResponse
+    {
+        public int Id { get; set; }
+        public int TaskId { get; set; }
+        public string TaskTitle { get; set; }
+        public string TaskDescription { get; set; }
+        public string TaskStatus { get; set; }
+        public string TaskPriority { get; set; }
+        public string Content { get; set; }
+        public string CreatedAt { get; set; }
+        public string UpdatedAt { get; set; }
+        public string CreatedBy { get; set; }
+        public string UpdatedBy { get; set; }
+        public string FileUrl { get; set; }
+        public string VoiceRecordUrl { get; set; }
+        public string DueDate { get; set; }
+        public string EstimatedTime { get; set; }
+        public List<string> AssignedUsers { get; set; }
+        public List<string> Clients { get; set; }
+        public List<string> Projects { get; set; }
+    }
+
 }

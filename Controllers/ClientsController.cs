@@ -53,7 +53,9 @@ namespace crmApi.Controllers
                         CreatedBy = reader.GetInt32("CreatedBy"),
                         CreatedAt = reader.GetDateTime("CreatedAt"),
                         ModifiedBy = reader.IsDBNull("ModifiedBy") ? null : reader.GetInt32("ModifiedBy"),
-                        ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt")
+                        ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt"),
+                        City = reader.IsDBNull("City") ? null : reader.GetString("City"),
+                        Address = reader.IsDBNull("Address") ? null : reader.GetString("Address")
                     };
 
                     clients.Add(client);
@@ -97,7 +99,9 @@ namespace crmApi.Controllers
                         CreatedBy = reader.GetInt32("CreatedBy"),
                         CreatedAt = reader.GetDateTime("CreatedAt"),
                         ModifiedBy = reader.IsDBNull("ModifiedBy") ? null : reader.GetInt32("ModifiedBy"),
-                        ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt")
+                        ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt"),
+                        City = reader.GetString("City"),
+                        Address = reader.GetString("Address")
                     };
                 }
             }
@@ -123,9 +127,9 @@ namespace crmApi.Controllers
 
                 string query = @"
                     INSERT INTO Clients 
-                        (First_name, Last_name, Phone, Email, Details, Country, CreatedBy, CreatedAt) 
+                        (First_name, Last_name, Phone, Email, Details, Country, CreatedBy, CreatedAt, City, Address) 
                     VALUES 
-                        (@First_name, @Last_name, @Phone, @Email, @Details, @Country, @CreatedBy, @CreatedAt)";
+                        (@First_name, @Last_name, @Phone, @Email, @Details, @Country, @CreatedBy, @CreatedAt, @City, @Address)";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@First_name", client.First_name);
@@ -136,6 +140,8 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Country", (object?)client.Country ?? DBNull.Value);
                 command.Parameters.AddWithValue("@CreatedBy", client.CreatedBy);
                 command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@City", client.City);
+                command.Parameters.AddWithValue("@Address", client.Address);
 
                 await command.ExecuteNonQueryAsync();
             }
@@ -166,6 +172,8 @@ namespace crmApi.Controllers
                         Country = @Country,
                         ModifiedBy = @ModifiedBy,
                         ModifiedAt = @ModifiedAt
+                        City = @City,
+                        Address = @Address
                     WHERE Id = @Id";
 
                 using var command = new MySqlCommand(query, connection);
@@ -178,6 +186,8 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@ModifiedBy", client.ModifiedBy);
                 command.Parameters.AddWithValue("@ModifiedAt", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@Id", id);
+                command.Parameters.AddWithValue("@City", client.City);
+                command.Parameters.AddWithValue("@Address", client.Address);
 
                 int rows = await command.ExecuteNonQueryAsync();
                 if (rows == 0)
