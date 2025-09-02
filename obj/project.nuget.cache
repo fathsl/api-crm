@@ -1,9 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "x4k45AAyS+8=",
+  "dgSpecHash": "5nq04ijC4G4=",
   "success": true,
   "projectFilePath": "C:\\Users\\DELL\\Desktop\\dotnet\\crmApi\\crmApi.csproj",
   "expectedPackageFiles": [
+    "C:\\Users\\DELL\\.nuget\\packages\\awssdk.core\\4.0.0.26\\awssdk.core.4.0.0.26.nupkg.sha512",
+    "C:\\Users\\DELL\\.nuget\\packages\\awssdk.s3\\4.0.6.12\\awssdk.s3.4.0.6.12.nupkg.sha512",
     "C:\\Users\\DELL\\.nuget\\packages\\bouncycastle.cryptography\\2.3.1\\bouncycastle.cryptography.2.3.1.nupkg.sha512",
     "C:\\Users\\DELL\\.nuget\\packages\\epplus\\6.2.19\\epplus.6.2.19.nupkg.sha512",
     "C:\\Users\\DELL\\.nuget\\packages\\epplus.interfaces\\6.1.1\\epplus.interfaces.6.1.1.nupkg.sha512",

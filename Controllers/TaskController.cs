@@ -220,122 +220,83 @@ namespace crmApi.Controllers
         }
 
         // PUT: api/Task/{id}
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateTask(int id, UpdateTaskDto updateTaskDto)
+        [HttpPut("{id}/status")]
+        public async Task<ActionResult> UpdateTaskStatus(int id, [FromBody] UpdateTaskStatusRequest request)
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string checkQuery = "SELECT COUNT(*) FROM Tasks WHERE Id = @id";
+                string checkQuery = "SELECT Id FROM Tasks WHERE Id = @Id";
                 using var checkCommand = new MySqlCommand(checkQuery, connection);
-                checkCommand.Parameters.AddWithValue("@id", id);
+                checkCommand.Parameters.AddWithValue("@Id", id);
 
-                var exists = Convert.ToInt32(await checkCommand.ExecuteScalarAsync()) > 0;
-                if (!exists)
+                var taskExists = await checkCommand.ExecuteScalarAsync();
+                if (taskExists == null)
                 {
                     return NotFound(new { message = "Görev bulunamadı" });
                 }
 
-                var updateFields = new List<string>();
-                var parameters = new List<MySqlParameter>();
+                string updateQuery = @"
+            UPDATE Tasks 
+            SET Status = @Status, 
+                UpdatedByUserId = @UpdatedByUserId, 
+                UpdatedAt = @UpdatedAt 
+            WHERE Id = @Id";
 
-                if (!string.IsNullOrEmpty(updateTaskDto.Title))
-                {
-                    updateFields.Add("Title = @Title");
-                    parameters.Add(new MySqlParameter("@Title", updateTaskDto.Title));
-                }
-                if (updateTaskDto.Description != null)
-                {
-                    updateFields.Add("Description = @Description");
-                    parameters.Add(new MySqlParameter("@Description", updateTaskDto.Description));
-                }
-                if (updateTaskDto.Status.HasValue)
-                {
-                    updateFields.Add("Status = @Status");
-                    parameters.Add(new MySqlParameter("@Status", updateTaskDto.Status.Value.ToString()));
-                }
-                if (updateTaskDto.Priority.HasValue)
-                {
-                    updateFields.Add("Priority = @Priority");
-                    parameters.Add(new MySqlParameter("@Priority", updateTaskDto.Priority.Value.ToString()));
-                }
-                if (updateTaskDto.DueDate.HasValue)
-                {
-                    updateFields.Add("DueDate = @DueDate");
-                    parameters.Add(new MySqlParameter("@DueDate", updateTaskDto.DueDate.Value));
-                }
-                if (!string.IsNullOrEmpty(updateTaskDto.EstimatedTime))
-                {
-                    updateFields.Add("EstimatedTime = @EstimatedTime");
-                    parameters.Add(new MySqlParameter("@EstimatedTime", updateTaskDto.EstimatedTime));
-                }
-                if (updateTaskDto.SortOrder.HasValue)
-                {
-                    updateFields.Add("SortOrder = @SortOrder");
-                    parameters.Add(new MySqlParameter("@SortOrder", updateTaskDto.SortOrder.Value));
-                }
-
-                if (updateFields.Count > 0)
-                {
-                    updateFields.Add("UpdatedAt = @UpdatedAt");
-                    parameters.Add(new MySqlParameter("@UpdatedAt", DateTime.UtcNow));
-
-                    string updateQuery = $"UPDATE Tasks SET {string.Join(", ", updateFields)} WHERE Id = @id";
-                    using var updateCommand = new MySqlCommand(updateQuery, connection);
-
-                    foreach (var param in parameters)
-                    {
-                        updateCommand.Parameters.Add(param);
-                    }
-                    updateCommand.Parameters.AddWithValue("@id", id);
-
-                    await updateCommand.ExecuteNonQueryAsync();
-                }
-
-                if (updateTaskDto.AssignedUserIds != null)
-                {
-                    await UpdateTaskAssignments(connection, id, updateTaskDto.AssignedUserIds);
-                }
-
-                return Ok(new { message = "Görev başarıyla güncellendi" });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Görev güncellenirken hata oluştu", error = ex.Message });
-            }
-        }
-
-        // PUT: api/Task/{id}/status
-        [HttpPut("{id}/status")]
-        public async Task<IActionResult> UpdateTaskStatus(int id, UpdateTaskStatusDto updateStatusDto)
-        {
-            try
-            {
-                using var connection = new MySqlConnection(_connectionString);
-                await connection.OpenAsync();
-
-                string updateQuery = "UPDATE Tasks SET Status = @Status, SortOrder = @SortOrder, UpdatedAt = @UpdatedAt WHERE Id = @id";
                 using var updateCommand = new MySqlCommand(updateQuery, connection);
-                updateCommand.Parameters.AddWithValue("@Status", updateStatusDto.Status.ToString());
-                updateCommand.Parameters.AddWithValue("@SortOrder", updateStatusDto.SortOrder);
+                updateCommand.Parameters.AddWithValue("@Id", id);
+                updateCommand.Parameters.AddWithValue("@Status", request.Status);
+                updateCommand.Parameters.AddWithValue("@UpdatedByUserId", request.UpdatedByUserId);
                 updateCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
-                updateCommand.Parameters.AddWithValue("@id", id);
 
-                var rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+                int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
 
                 if (rowsAffected == 0)
                 {
-                    return NotFound(new { message = "Görev bulunamadı" });
+                    return BadRequest(new { message = "Görev durumu güncellenemedi" });
                 }
 
-                return Ok(new { message = "Görev durumu başarıyla güncellendi" });
+                string selectQuery = @"
+            SELECT t.*, 
+                   cu.Ad as CreatedByUserName, cu.Soyad as CreatedByUserSurname,
+                   uu.Ad as UpdatedByUserName, uu.Soyad as UpdatedByUserSurname
+            FROM Tasks t
+            LEFT JOIN KullaniciBilgileri cu ON t.CreatedByUserId = cu.KullaniciID
+            LEFT JOIN KullaniciBilgileri uu ON t.UpdatedByUserId = uu.KullaniciID
+            WHERE t.Id = @Id";
+
+                using var selectCommand = new MySqlCommand(selectQuery, connection);
+                selectCommand.Parameters.AddWithValue("@Id", id);
+
+                using var reader = await selectCommand.ExecuteReaderAsync();
+
+                if (await reader.ReadAsync())
+                {
+                    var updatedTask = new TaskResponseDto
+                    {
+                        Id = reader.GetInt32("Id"),
+                        Title = reader.GetString("Title"),
+                        Description = reader.IsDBNull("Description") ? null : reader.GetString("Description"),
+                        Status = Enum.Parse<Models.TaskStatus>(reader.GetString("Status")),
+                        Priority = Enum.Parse<TaskPriority>(reader.GetString("Priority")),
+                        DueDate = reader.IsDBNull("DueDate") ? null : reader.GetDateTime("DueDate"),
+                        EstimatedTime = reader.IsDBNull("EstimatedTime") ? null : reader.GetString("EstimatedTime"),
+                        SortOrder = reader.GetInt32("SortOrder"),
+                        CreatedByUserId = reader.GetInt32("CreatedByUserId"),
+                        CreatedByUserName = reader.IsDBNull("CreatedByUserName") ? "" : $"{reader.GetString("CreatedByUserName")} {reader.GetString("CreatedByUserSurname")}",
+                        CreatedAt = reader.GetDateTime("CreatedAt"),
+                        UpdatedByUserId = reader.IsDBNull("UpdatedByUserId") ? null : reader.GetInt32("UpdatedByUserId"),
+                        UpdatedByUserName = reader.IsDBNull("UpdatedByUserName") ? null : $"{reader.GetString("UpdatedByUserName")} {reader.GetString("UpdatedByUserSurname")}",
+                        UpdatedAt = reader.IsDBNull("UpdatedAt") ? null : reader.GetDateTime("UpdatedAt"),
+                        AssignedUsers = new List<UserResponseDto>()
+                    };
+
+                    return Ok(updatedTask);
+                }
+
+                return NotFound(new { message = "Güncellenmiş görev bulunamadı" });
             }
             catch (Exception ex)
             {
@@ -343,6 +304,12 @@ namespace crmApi.Controllers
             }
         }
 
+        public class UpdateTaskStatusRequest
+        {
+            public string Status { get; set; } = string.Empty;
+            public int UpdatedByUserId { get; set; }
+        }
+        
         // PUT: api/Task/bulk-update-order
         [HttpPut("bulk-update-order")]
         public async Task<IActionResult> BulkUpdateTaskOrder(BulkUpdateTaskOrderDto bulkUpdateDto)
