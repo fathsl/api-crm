@@ -96,6 +96,12 @@ namespace crmApi.Models
         [MaxLength(500)]
         public string FilePath { get; set; }
 
+        public string BucketName { get; set; }
+
+        public string FileKey { get; set; }
+
+        public int? Duration { get; set; }
+
         public DateTime UploadedAt { get; set; } = DateTime.Now;
     }
 
@@ -105,8 +111,44 @@ namespace crmApi.Models
         public int SenderId { get; set; }
         public int? ReceiverId { get; set; }
         public string Content { get; set; }
-        public byte MessageType { get; set; } = 0;
+        public byte MessageType { get; set; } = 1;
     }
+
+    public class SendMessageWithFileRequest
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string OriginalFileName { get; set; } = string.Empty;
+        public long FileSize { get; set; }
+        public string MimeType { get; set; } = string.Empty;
+        public string? FileReference { get; set; }
+        public string? BucketName { get; set; }
+        public string? FileKey { get; set; }
+        public string? IdriveUrl { get; set; }
+        public byte MessageType { get; set; } = 2;
+    }
+
+    public class SendVoiceMessageRequest
+    {
+        public int DiscussionId { get; set; }
+        public int SenderId { get; set; }
+        public int? ReceiverId { get; set; }
+        public string Content { get; set; }
+        public string FileName { get; set; }
+        public string OriginalFileName { get; set; }
+        public long FileSize { get; set; }
+        public string MimeType { get; set; }
+        public string FileReference { get; set; }
+        public string BucketName { get; set; }
+        public string FileKey { get; set; }
+        public string? IdriveUrl { get; set; }
+        public int? Duration { get; set; }
+        public byte MessageType { get; set; } = 3;
+    }
+
 
     public class CreateDiscussionRequest
     {
@@ -137,6 +179,9 @@ namespace crmApi.Models
         public int? TaskId { get; set; }
         public string TaskTitle { get; set; }
         public string TaskDescription { get; set; }
+        public string IDriveUrl { get; set; }
+        public string BucketName { get; set; }
+        public string FileKey { get; set; }
         public TaskStatus? TaskStatus { get; set; }
         public TaskPriority? TaskPriority { get; set; }
         public DateTime? DueDate { get; set; }
@@ -288,5 +333,13 @@ namespace crmApi.Models
         public List<string> Clients { get; set; }
         public List<string> Projects { get; set; }
     }
+
+    public class PresignedUrlRequest
+    {
+        public string BucketName { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string ContentType { get; set; } = string.Empty;
+    }
+
 
 }

@@ -60,3 +60,7 @@ C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\Microsoft.Win32.SystemEvent
 C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\System.Drawing.Common.dll
 C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\runtimes\win\lib\net7.0\Microsoft.Win32.SystemEvents.dll
 C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\runtimes\win\lib\net7.0\System.Drawing.Common.dll
+C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\AWSSDK.Core.dll
+C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\AWSSDK.S3.dll
+C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\CloudinaryDotNet.dll
+C:\Users\DELL\Desktop\dotnet\crmApi\bin\Debug\net9.0\Newtonsoft.Json.dll

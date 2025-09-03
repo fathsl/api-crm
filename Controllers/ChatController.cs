@@ -1,8 +1,11 @@
+using Amazon.S3;
+using CloudinaryDotNet.Actions;
 using crmApi.Models;
 using Microsoft.AspNetCore.Mvc;
 using MySql.Data.MySqlClient;
 using OfficeOpenXml;
-using OfficeOpenXml.Style;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 
 namespace crmApi.Controllers
 {
@@ -77,7 +80,7 @@ namespace crmApi.Controllers
                         m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
                         m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
                         t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
-                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize
+                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize,d.IDriveUrl,d.BucketName,d.FileKey
                     FROM ChatMessages m
                     LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
                     LEFT JOIN Tasks t ON m.TaskId = t.Id
@@ -119,7 +122,10 @@ namespace crmApi.Controllers
                         TaskPriority = reader.IsDBNull(reader.GetOrdinal("TaskPriority")) ? null : Enum.Parse<TaskPriority>(reader["TaskPriority"].ToString()),
                         DueDate = reader.IsDBNull(reader.GetOrdinal("DueDate")) ? null : reader.GetDateTime(reader.GetOrdinal("DueDate")),
                         EstimatedTime = reader.IsDBNull(reader.GetOrdinal("EstimatedTime")) ? null : reader["EstimatedTime"].ToString(),
-                        AssignedUserIds = new List<int>()
+                        AssignedUserIds = new List<int>(),
+                        IDriveUrl = reader["IdriveUrl"]?.ToString(),
+                        BucketName = reader["BucketName"]?.ToString(),
+                        FileKey = reader["FileKey"]?.ToString()
                     };
 
                     messages.Add(message);
@@ -301,211 +307,326 @@ namespace crmApi.Controllers
             }
         }
 
-        [HttpPost("messages/send-with-file")]
-        public async Task<ActionResult<MessageResponse>> SendMessageWithFile([FromForm] int discussionId,
-                                                                            [FromForm] int senderId,
-                                                                            [FromForm] int? receiverId,
-                                                                            [FromForm] string content,
-                                                                            [FromForm] byte messageType,
-                                                                            [FromForm] IFormFile? file)
+        private string ExtractBucketFromUrl(string url)
         {
             try
             {
-                using var connection = new MySqlConnection(_connectionString);
-                await connection.OpenAsync();
-
-                using var transaction = await connection.BeginTransactionAsync();
-
-                string fileReference = null;
-
-                if (file != null && file.Length > 0)
-                {
-                    _logger.LogInformation($"Processing file: {file.FileName}, Size: {file.Length}, ContentType: {file.ContentType}");
-
-                    using var memoryStream = new MemoryStream();
-                    await file.CopyToAsync(memoryStream);
-                    var fileBytes = memoryStream.ToArray();
-                    var base64String = Convert.ToBase64String(fileBytes);
-
-                    fileReference = $"data:{file.ContentType};base64,{base64String}";
-
-                    _logger.LogInformation($"Base64 string length: {base64String.Length}");
-                    _logger.LogInformation($"Full data URI length: {fileReference.Length}");
-                }
-
-                string messageQuery = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, FileReference, CreatedAt)
-                                    VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @fileReference, @createdAt);
-                                    SELECT LAST_INSERT_ID();";
-
-                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
-                messageCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                messageCommand.Parameters.AddWithValue("@senderId", senderId);
-                messageCommand.Parameters.AddWithValue("@receiverId", receiverId ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@content", content);
-                messageCommand.Parameters.AddWithValue("@messageType", messageType);
-                messageCommand.Parameters.AddWithValue("@fileReference", (object)fileReference ?? DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
-
-                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
-
-                if (file != null && file.Length > 0)
-                {
-                    string documentQuery = @"
-                        INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, FileSize, MimeType, FilePath, UploadedAt)
-                        VALUES (@messageId, @fileName, @originalFileName, @fileSize, @mimeType, @filePath, @uploadedAt);";
-
-                    using var documentCommand = new MySqlCommand(documentQuery, connection, transaction);
-                    documentCommand.Parameters.AddWithValue("@messageId", messageId);
-                    documentCommand.Parameters.AddWithValue("@fileName", file.FileName);
-                    documentCommand.Parameters.AddWithValue("@originalFileName", file.FileName);
-                    documentCommand.Parameters.AddWithValue("@fileSize", file.Length);
-                    documentCommand.Parameters.AddWithValue("@mimeType", file.ContentType);
-                    documentCommand.Parameters.AddWithValue("@filePath", "base64_stored_in_message");
-                    documentCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
-
-                    await documentCommand.ExecuteNonQueryAsync();
-                }
-
-                await transaction.CommitAsync();
-
-                _logger.LogInformation($"Message saved with ID: {messageId}, FileReference length: {fileReference?.Length ?? 0}");
-
-                return Ok(new MessageResponse
-                {
-                    Id = messageId,
-                    DiscussionId = discussionId,
-                    SenderId = senderId,
-                    ReceiverId = receiverId,
-                    Content = content,
-                    MessageType = messageType,
-                    IsEdited = false,
-                    CreatedAt = DateTime.Now,
-                    FileReference = fileReference
-                });
+                var uri = new Uri(url);
+                var pathSegments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                return pathSegments.Length > 0 ? pathSegments[0] : "";
             }
-            catch (Exception ex)
+            catch
             {
-                _logger.LogError(ex, "Error sending message with file");
-                return StatusCode(500, new { message = "Error sending message with file", error = ex.Message });
+                return "";
             }
         }
 
+
+        [HttpPost("messages/send-with-file")]
+        public async Task<IActionResult> SendMessageWithFile([FromForm] SendMessageWithFileRequest request, IFormFile file)
+        {
+            try
+            {
+                if (file == null || file.Length == 0)
+                {
+                    return BadRequest(new { message = "No file provided" });
+                }
+
+                _logger.LogInformation($"Processing file upload: {file.FileName}, Size: {file.Length}");
+
+                // Upload to Cloudinary
+                string cloudinaryUrl;
+                try
+                {
+                    cloudinaryUrl = await UploadToCloudinary(file, request.FileName ?? file.FileName);
+                    _logger.LogInformation($"File uploaded to Cloudinary: {cloudinaryUrl}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Cloudinary upload failed");
+                    return StatusCode(500, new { message = $"File upload failed: {ex.Message}" });
+                }
+
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+                using var transaction = await connection.BeginTransactionAsync();
+
+                try
+                {
+                    // Insert into ChatMessages - matching your exact schema
+                    string messageQuery = @"
+                INSERT INTO ChatMessages (
+                    DiscussionId, 
+                    SenderId, 
+                    ReceiverId, 
+                    Content, 
+                    MessageType, 
+                    HasFile, 
+                    FileName, 
+                    MimeType, 
+                    FileSize, 
+                    FileReference
+                ) VALUES (
+                    @discussionId, 
+                    @senderId, 
+                    @receiverId, 
+                    @content, 
+                    @messageType, 
+                    @hasFile, 
+                    @fileName, 
+                    @mimeType, 
+                    @fileSize, 
+                    @fileReference
+                );
+                SELECT LAST_INSERT_ID();";
+
+                    using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                    messageCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    messageCommand.Parameters.AddWithValue("@senderId", request.SenderId);
+                    messageCommand.Parameters.AddWithValue("@receiverId", request.ReceiverId ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@content", request.Content ?? $"File: {file.FileName}");
+                    messageCommand.Parameters.AddWithValue("@messageType", request.MessageType);
+                    messageCommand.Parameters.AddWithValue("@hasFile", 1); // tinyint(1) for true
+                    messageCommand.Parameters.AddWithValue("@fileName", file.FileName);
+                    messageCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
+                    messageCommand.Parameters.AddWithValue("@fileSize", file.Length);
+                    messageCommand.Parameters.AddWithValue("@fileReference", request.FileReference ?? $"ref_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{file.FileName}");
+
+                    var messageIdResult = await messageCommand.ExecuteScalarAsync();
+                    var messageId = Convert.ToInt32(messageIdResult);
+                    _logger.LogInformation($"Message inserted with ID: {messageId}");
+
+                    // Insert into MessageDocuments - matching your exact schema
+                    string docQuery = @"
+                INSERT INTO MessageDocuments (
+                    MessageId, 
+                    FileName, 
+                    OriginalFileName, 
+                    FileSize, 
+                    MimeType, 
+                    FilePath, 
+                    IDriveUrl, 
+                    BucketName, 
+                    FileKey
+                ) VALUES (
+                    @messageId, 
+                    @fileName, 
+                    @originalFileName, 
+                    @fileSize, 
+                    @mimeType, 
+                    @filePath, 
+                    @idriveUrl, 
+                    @bucketName, 
+                    @fileKey
+                )";
+
+                    using var docCommand = new MySqlCommand(docQuery, connection, transaction);
+                    docCommand.Parameters.AddWithValue("@messageId", messageId);
+                    docCommand.Parameters.AddWithValue("@fileName", file.FileName);
+                    docCommand.Parameters.AddWithValue("@originalFileName", file.FileName);
+                    docCommand.Parameters.AddWithValue("@fileSize", file.Length);
+                    docCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
+                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl); // Required field
+                    docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "chat-files");
+                    docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}");
+
+                    await docCommand.ExecuteNonQueryAsync();
+                    await transaction.CommitAsync();
+
+                    _logger.LogInformation("File upload completed successfully");
+
+                    return Ok(new
+                    {
+                        id = messageId,
+                        discussionId = request.DiscussionId,
+                        senderId = request.SenderId,
+                        receiverId = request.ReceiverId,
+                        content = request.Content ?? $"File: {file.FileName}",
+                        messageType = request.MessageType,
+                        createdAt = DateTime.UtcNow,
+                        fileName = file.FileName,
+                        fileSize = file.Length,
+                        mimeType = file.ContentType,
+                        idriveUrl = cloudinaryUrl,
+                        fileReference = request.FileReference,
+                        bucketName = request.BucketName ?? "chat-files",
+                        fileKey = request.FileKey ?? $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}",
+                        hasFile = true
+                    });
+                }
+                catch (Exception dbEx)
+                {
+                    await transaction.RollbackAsync();
+                    _logger.LogError(dbEx, "Database transaction failed");
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in SendMessageWithFile endpoint");
+                return StatusCode(500, new
+                {
+                    message = "Error sending message with file",
+                    error = ex.Message,
+                    details = ex.InnerException?.Message
+                });
+            }
+        }
 
         [HttpPost("messages/send-with-voice")]
-        public async Task<ActionResult<MessageResponse>> SendMessageWithVoice([FromForm] int discussionId,
-                                                                            [FromForm] int senderId,
-                                                                            [FromForm] int? receiverId,
-                                                                            [FromForm] string content,
-                                                                            [FromForm] byte messageType,
-                                                                            [FromForm] IFormFile? voiceFile,
-                                                                            [FromForm] int duration)
+        public async Task<IActionResult> SendVoiceMessage([FromForm] SendVoiceMessageRequest request, IFormFile audioFile)
         {
             try
             {
-                _logger.LogInformation($"Received voice message request: DiscussionId={discussionId}, SenderId={senderId}, Duration={duration}");
-
-                if (voiceFile == null || voiceFile.Length == 0)
+                if (audioFile == null || audioFile.Length == 0)
                 {
-                    return BadRequest(new { message = "Voice file is required" });
+                    return BadRequest(new { message = "No audio file provided" });
                 }
 
-                if (duration <= 0)
+                _logger.LogInformation($"Processing voice message upload: {audioFile.FileName}, Size: {audioFile.Length}, Duration: {request.Duration}s");
+
+                string cloudinaryUrl;
+                try
                 {
-                    _logger.LogWarning($"Invalid duration received: {duration}");
-                    return BadRequest(new { message = "Invalid duration" });
+                    cloudinaryUrl = await UploadAudioToCloudinary(audioFile, request.FileName ?? audioFile.FileName);
+                    _logger.LogInformation($"Audio uploaded to Cloudinary: {cloudinaryUrl}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Cloudinary audio upload failed");
+                    return StatusCode(500, new { message = $"Audio upload failed: {ex.Message}" });
                 }
 
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-
                 using var transaction = await connection.BeginTransactionAsync();
 
-                string fileReference = null;
-
-                _logger.LogInformation($"Processing voice file: {voiceFile.FileName}, Size: {voiceFile.Length}, ContentType: {voiceFile.ContentType}");
-
-                const int maxFileSizeBytes = 2 * 1024 * 1024;
-                if (voiceFile.Length > maxFileSizeBytes)
+                try
                 {
-                    return BadRequest(new { message = "Voice file too large. Maximum 2MB allowed." });
+                    string messageQuery = @"
+                INSERT INTO ChatMessages (
+                    DiscussionId, 
+                    SenderId, 
+                    ReceiverId, 
+                    Content, 
+                    MessageType, 
+                    HasFile, 
+                    FileName, 
+                    MimeType, 
+                    FileSize, 
+                    FileReference,
+                    Duration
+                ) VALUES (
+                    @discussionId, 
+                    @senderId, 
+                    @receiverId, 
+                    @content, 
+                    @messageType, 
+                    @hasFile, 
+                    @fileName, 
+                    @mimeType, 
+                    @fileSize, 
+                    @fileReference,
+                    @duration
+                );
+                SELECT LAST_INSERT_ID();";
+
+                    using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                    messageCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    messageCommand.Parameters.AddWithValue("@senderId", request.SenderId);
+                    messageCommand.Parameters.AddWithValue("@receiverId", request.ReceiverId ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@content", request.Content ?? "Voice message");
+                    messageCommand.Parameters.AddWithValue("@messageType", request.MessageType);
+                    messageCommand.Parameters.AddWithValue("@hasFile", 1);
+                    messageCommand.Parameters.AddWithValue("@fileName", audioFile.FileName ?? "voice_message.webm");
+                    messageCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
+                    messageCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
+                    messageCommand.Parameters.AddWithValue("@fileReference", request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}");
+                    messageCommand.Parameters.AddWithValue("@duration", request.Duration ?? (object)DBNull.Value);
+
+                    var messageIdResult = await messageCommand.ExecuteScalarAsync();
+                    var messageId = Convert.ToInt32(messageIdResult);
+                    _logger.LogInformation($"Voice message inserted with ID: {messageId}");
+
+                    string docQuery = @"
+                INSERT INTO MessageDocuments (
+                    MessageId, 
+                    FileName, 
+                    OriginalFileName, 
+                    FileSize, 
+                    MimeType, 
+                    FilePath, 
+                    IDriveUrl, 
+                    BucketName, 
+                    FileKey
+                ) VALUES (
+                    @messageId, 
+                    @fileName, 
+                    @originalFileName, 
+                    @fileSize, 
+                    @mimeType, 
+                    @filePath, 
+                    @idriveUrl, 
+                    @bucketName, 
+                    @fileKey
+                )";
+
+                    using var docCommand = new MySqlCommand(docQuery, connection, transaction);
+                    docCommand.Parameters.AddWithValue("@messageId", messageId);
+                    docCommand.Parameters.AddWithValue("@fileName", audioFile.FileName ?? "voice_message.webm");
+                    docCommand.Parameters.AddWithValue("@originalFileName", audioFile.FileName ?? "voice_message.webm");
+                    docCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
+                    docCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
+                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "voice-messages");
+                    docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}");
+
+                    await docCommand.ExecuteNonQueryAsync();
+                    await transaction.CommitAsync();
+
+                    _logger.LogInformation("Voice message upload completed successfully");
+
+                    return Ok(new
+                    {
+                        id = messageId,
+                        discussionId = request.DiscussionId,
+                        senderId = request.SenderId,
+                        receiverId = request.ReceiverId,
+                        content = request.Content ?? "Voice message",
+                        messageType = request.MessageType,
+                        createdAt = DateTime.UtcNow,
+                        fileName = audioFile.FileName,
+                        originalFileName = audioFile.FileName,
+                        fileSize = audioFile.Length,
+                        mimeType = audioFile.ContentType,
+                        idriveUrl = cloudinaryUrl,
+                        fileReference = request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}",
+                        bucketName = request.BucketName ?? "voice-messages",
+                        fileKey = request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}",
+                        duration = request.Duration,
+                        hasFile = true
+                    });
                 }
-
-                var allowedContentTypes = new[] { "audio/wav", "audio/webm", "audio/ogg", "audio/mp3", "audio/mpeg", "audio/m4a" };
-                if (!allowedContentTypes.Contains(voiceFile.ContentType.ToLower()))
+                catch (Exception dbEx)
                 {
-                    return BadRequest(new { message = "Invalid audio format. Supported formats: WAV, WebM, OGG, MP3, M4A" });
+                    await transaction.RollbackAsync();
+                    _logger.LogError(dbEx, "Database transaction failed for voice message");
+                    throw;
                 }
-
-                using var memoryStream = new MemoryStream();
-                await voiceFile.CopyToAsync(memoryStream);
-                var fileBytes = memoryStream.ToArray();
-
-                if (fileBytes.Length == 0)
-                {
-                    return BadRequest(new { message = "Empty audio file" });
-                }
-
-                var base64String = Convert.ToBase64String(fileBytes);
-                fileReference = $"data:{voiceFile.ContentType};base64,{base64String}";
-
-                _logger.LogInformation($"Voice Base64 string length: {base64String.Length}");
-                _logger.LogInformation($"Full voice data URI length: {fileReference.Length}");
-
-                string messageQuery = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, FileReference, Duration, CreatedAt)
-                                    VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @fileReference, @duration, @createdAt);
-                                    SELECT LAST_INSERT_ID();";
-
-                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
-                messageCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                messageCommand.Parameters.AddWithValue("@senderId", senderId);
-                messageCommand.Parameters.AddWithValue("@receiverId", receiverId ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@content", content ?? "Voice message");
-                messageCommand.Parameters.AddWithValue("@messageType", messageType);
-                messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
-                messageCommand.Parameters.AddWithValue("@duration", duration);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
-
-                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
-
-                string documentQuery = @"
-                    INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, FileSize, MimeType, FilePath, UploadedAt)
-                    VALUES (@messageId, @fileName, @originalFileName, @fileSize, @mimeType, @filePath, @uploadedAt);";
-
-                using var documentCommand = new MySqlCommand(documentQuery, connection, transaction);
-                documentCommand.Parameters.AddWithValue("@messageId", messageId);
-                documentCommand.Parameters.AddWithValue("@fileName", voiceFile.FileName ?? "voice_message.webm");
-                documentCommand.Parameters.AddWithValue("@originalFileName", voiceFile.FileName ?? "voice_message.webm");
-                documentCommand.Parameters.AddWithValue("@fileSize", voiceFile.Length);
-                documentCommand.Parameters.AddWithValue("@mimeType", voiceFile.ContentType);
-                documentCommand.Parameters.AddWithValue("@filePath", "base64_stored_in_message");
-                documentCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
-
-                await documentCommand.ExecuteNonQueryAsync();
-                await transaction.CommitAsync();
-
-                _logger.LogInformation($"Voice message saved successfully with ID: {messageId}, Duration: {duration}, FileReference length: {fileReference.Length}");
-
-                return Ok(new MessageResponse
-                {
-                    Id = messageId,
-                    DiscussionId = discussionId,
-                    SenderId = senderId,
-                    ReceiverId = receiverId,
-                    Content = content ?? "Voice message",
-                    MessageType = messageType,
-                    IsEdited = false,
-                    CreatedAt = DateTime.Now,
-                    FileReference = fileReference,
-                    Duration = duration
-                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending voice message");
-                return StatusCode(500, new { message = "Error sending voice message", error = ex.Message });
+                _logger.LogError(ex, "Error in SendVoiceMessage endpoint");
+                return StatusCode(500, new
+                {
+                    message = "Error sending voice message",
+                    error = ex.Message,
+                    details = ex.InnerException?.Message
+                });
             }
         }
-
 
         [HttpPost("messages/{messageId}/documents")]
         public async Task<ActionResult<MessageResponse>> UploadDocument(int messageId, IFormFile file)
@@ -614,10 +735,15 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"SELECT FileName, MimeType, FileData FROM FileStorage WHERE MessageId = @messageId";
+                string query = @"
+            SELECT md.FileName, md.MimeType, md.IDriveUrl, md.FileSize
+            FROM MessageDocuments md
+            INNER JOIN ChatMessages cm ON md.MessageId = cm.Id
+            WHERE cm.Id = @messageId AND cm.MessageType = @fileMessageType";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@messageId", messageId);
+                command.Parameters.AddWithValue("@fileMessageType", 2);
 
                 using var reader = await command.ExecuteReaderAsync();
                 if (!await reader.ReadAsync())
@@ -625,9 +751,16 @@ namespace crmApi.Controllers
 
                 var fileName = reader["FileName"].ToString();
                 var mimeType = reader["MimeType"].ToString();
-                var fileData = (byte[])reader["FileData"];
+                var IDriveUrl = reader["IDriveUrl"].ToString();
+                var fileSize = reader["FileSize"];
 
-                return File(fileData, mimeType, fileName);
+                return Ok(new
+                {
+                    downloadUrl = IDriveUrl,
+                    fileName = fileName,
+                    mimeType = mimeType,
+                    fileSize = fileSize
+                });
             }
             catch (Exception ex)
             {
@@ -645,7 +778,7 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-            SELECT cm.FileReference, md.FileName, md.MimeType 
+            SELECT cm.Duration, md.FileName, md.MimeType, md.IDriveUrl
             FROM ChatMessages cm
             LEFT JOIN MessageDocuments md ON cm.Id = md.MessageId
             WHERE cm.Id = @messageId AND cm.MessageType = @voiceMessageType";
@@ -658,30 +791,95 @@ namespace crmApi.Controllers
                 if (!await reader.ReadAsync())
                     return NotFound("Voice message not found");
 
-                var fileReference = reader["FileReference"]?.ToString();
+                var duration = reader["Duration"];
                 var fileName = reader["FileName"]?.ToString() ?? "voice_message.webm";
                 var mimeType = reader["MimeType"]?.ToString() ?? "audio/webm";
+                var iDriveUrl = reader["IDriveUrl"]?.ToString();
 
-                if (string.IsNullOrEmpty(fileReference) || !fileReference.StartsWith("data:"))
-                    return NotFound("Voice data not found");
+                if (string.IsNullOrEmpty(iDriveUrl))
+                    return NotFound("Voice file not found");
 
-                try
+                var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+                var secretKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+                var serviceUrl = Environment.GetEnvironmentVariable("AWS_S3_SERVICE_URL");
+
+                using var client = new AmazonS3Client(
+                    accessKey,
+                    secretKey,
+                    new AmazonS3Config
+                    {
+                        ServiceURL = serviceUrl,
+                        ForcePathStyle = true
+                    }
+                );
+
+                var bucketName = "voice-messages";
+                var key = fileName;
+                var presignedUrl = client.GetPreSignedURL(new Amazon.S3.Model.GetPreSignedUrlRequest
                 {
-                    var base64Data = fileReference.Split(',')[1];
-                    var audioBytes = Convert.FromBase64String(base64Data);
+                    BucketName = bucketName,
+                    Key = key,
+                    Verb = HttpVerb.GET,
+                    Expires = DateTime.UtcNow.AddHours(1),
+                    ResponseHeaderOverrides = new Amazon.S3.Model.ResponseHeaderOverrides
+                    {
+                        ContentType = mimeType
+                    }
+                });
 
-                    return File(audioBytes, mimeType, fileName);
-                }
-                catch (Exception ex)
+                return Ok(new
                 {
-                    _logger.LogError(ex, "Error decoding voice data");
-                    return StatusCode(500, new { message = "Error processing voice data" });
-                }
+                    audioUrl = iDriveUrl,
+                    fileName = fileName,
+                    mimeType = mimeType,
+                    duration = duration
+                });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving voice message");
                 return StatusCode(500, new { message = "Error retrieving voice message", error = ex.Message });
+            }
+        }
+
+        [HttpGet("files/access-url")]
+        public async Task<IActionResult> GetFileAccessUrl([FromQuery] string bucketName, [FromQuery] string fileName)
+        {
+            try
+            {
+                var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+                var secretKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+                var serviceUrl = Environment.GetEnvironmentVariable("AWS_S3_SERVICE_URL");
+
+                if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey) || string.IsNullOrEmpty(serviceUrl))
+                {
+                    return StatusCode(500, "Server configuration error");
+                }
+
+                using var client = new AmazonS3Client(
+                    accessKey,
+                    secretKey,
+                    new AmazonS3Config
+                    {
+                        ServiceURL = serviceUrl,
+                        ForcePathStyle = true
+                    }
+                );
+
+                var presignedUrl = client.GetPreSignedURL(new Amazon.S3.Model.GetPreSignedUrlRequest
+                {
+                    BucketName = bucketName,
+                    Key = fileName,
+                    Verb = HttpVerb.GET,
+                    Expires = DateTime.UtcNow.AddHours(24)
+                });
+
+                return Ok(new { accessUrl = presignedUrl });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating file access URL");
+                return StatusCode(500, new { message = "Error generating file access URL" });
             }
         }
 
@@ -745,7 +943,7 @@ namespace crmApi.Controllers
 
                     fileName = $"{Guid.NewGuid()}_{file.FileName}";
                     filePath = Path.Combine(uploadsFolder, fileName);
-                    
+
                     using var stream = new FileStream(filePath, FileMode.Create);
                     await file.CopyToAsync(stream);
 
@@ -1201,7 +1399,7 @@ namespace crmApi.Controllers
                 _logger.LogError(ex, "Error fetching messages with tasks");
                 return StatusCode(500, new { message = "Error fetching messages with tasks", error = ex.Message });
             }
-    }
+        }
 
         [HttpGet("discussions/{discussionId}/tasks")]
         public async Task<ActionResult<List<TaskDataResponse>>> GetDiscussionTasks(int discussionId)
@@ -1520,8 +1718,8 @@ namespace crmApi.Controllers
                 stream.Position = 0;
 
                 var fileName = $"{discussionTitle}_Tasks_{DateTime.Now:yyyy-MM-dd}.xlsx";
-                return File(stream, 
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                return File(stream,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     fileName);
             }
             catch (Exception ex)
@@ -1530,6 +1728,89 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error exporting tasks to Excel", error = ex.Message });
             }
         }
+
+        private async Task<string> UploadToCloudinary(IFormFile file, string fileName)
+        {
+            try
+            {
+                var cloudName = Environment.GetEnvironmentVariable("CLOUDINARY_CLOUD_NAME");
+                var apiKey = Environment.GetEnvironmentVariable("CLOUDINARY_API_KEY");
+                var apiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
+
+                if (string.IsNullOrEmpty(cloudName) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+                {
+                    throw new Exception("Cloudinary credentials not configured");
+                }
+
+                var account = new Account(cloudName, apiKey, apiSecret);
+                var cloudinary = new Cloudinary(account);
+
+                using var stream = file.OpenReadStream();
+                var uploadParams = new RawUploadParams()
+                {
+                    File = new FileDescription(fileName, stream),
+                    PublicId = $"chat-files/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{fileName}",
+                };
+
+                var uploadResult = await cloudinary.UploadAsync(uploadParams);
+
+                if (uploadResult.Error != null)
+                {
+                    throw new Exception($"Cloudinary upload failed: {uploadResult.Error.Message}");
+                }
+
+                return uploadResult.SecureUrl.ToString();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Cloudinary upload error for file: {fileName}");
+                throw;
+            }
+        }
+
+        private async Task<string> UploadAudioToCloudinary(IFormFile audioFile, string fileName)
+        {
+            try
+            {
+                var cloudName = Environment.GetEnvironmentVariable("CLOUDINARY_CLOUD_NAME");
+                var apiKey = Environment.GetEnvironmentVariable("CLOUDINARY_API_KEY");
+                var apiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
+
+                if (string.IsNullOrEmpty(cloudName) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+                {
+                    throw new Exception("Cloudinary credentials not configured");
+                }
+
+                var account = new Account(cloudName, apiKey, apiSecret);
+                var cloudinary = new Cloudinary(account);
+
+                using var stream = audioFile.OpenReadStream();
+
+                var uploadParams = new VideoUploadParams()
+                {
+                    File = new FileDescription(fileName, stream),
+                    PublicId = $"voice-messages/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
+                };
+
+                _logger.LogInformation($"Starting Cloudinary audio upload for: {fileName}");
+                var uploadResult = await cloudinary.UploadAsync(uploadParams);
+
+                if (uploadResult.Error != null)
+                {
+                    _logger.LogError($"Cloudinary audio upload error: {uploadResult.Error.Message}");
+                    throw new Exception($"Cloudinary audio upload failed: {uploadResult.Error.Message}");
+                }
+
+                _logger.LogInformation($"Cloudinary audio upload successful: {uploadResult.SecureUrl}");
+                return uploadResult.SecureUrl.ToString();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Exception in UploadAudioToCloudinary for file: {fileName}");
+                throw;
+            }
+        }
+
 
     }
 
