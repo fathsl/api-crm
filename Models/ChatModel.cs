@@ -180,6 +180,8 @@ namespace crmApi.Models
         public string TaskTitle { get; set; }
         public string TaskDescription { get; set; }
         public string IDriveUrl { get; set; }
+        public string AudioUrl { get; set; }
+        public string FileUrl { get; set; }
         public string BucketName { get; set; }
         public string FileKey { get; set; }
         public TaskStatus? TaskStatus { get; set; }

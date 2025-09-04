@@ -334,7 +334,6 @@ namespace crmApi.Controllers
 
                 _logger.LogInformation($"Processing file upload: {file.FileName}, Size: {file.Length}");
 
-                // Upload to Cloudinary
                 string cloudinaryUrl;
                 try
                 {
@@ -353,7 +352,6 @@ namespace crmApi.Controllers
 
                 try
                 {
-                    // Insert into ChatMessages - matching your exact schema
                     string messageQuery = @"
                 INSERT INTO ChatMessages (
                     DiscussionId, 
@@ -386,7 +384,7 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@receiverId", request.ReceiverId ?? (object)DBNull.Value);
                     messageCommand.Parameters.AddWithValue("@content", request.Content ?? $"File: {file.FileName}");
                     messageCommand.Parameters.AddWithValue("@messageType", request.MessageType);
-                    messageCommand.Parameters.AddWithValue("@hasFile", 1); // tinyint(1) for true
+                    messageCommand.Parameters.AddWithValue("@hasFile", 1);
                     messageCommand.Parameters.AddWithValue("@fileName", file.FileName);
                     messageCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
                     messageCommand.Parameters.AddWithValue("@fileSize", file.Length);
@@ -396,7 +394,6 @@ namespace crmApi.Controllers
                     var messageId = Convert.ToInt32(messageIdResult);
                     _logger.LogInformation($"Message inserted with ID: {messageId}");
 
-                    // Insert into MessageDocuments - matching your exact schema
                     string docQuery = @"
                 INSERT INTO MessageDocuments (
                     MessageId, 
@@ -426,7 +423,7 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@originalFileName", file.FileName);
                     docCommand.Parameters.AddWithValue("@fileSize", file.Length);
                     docCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
-                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl); // Required field
+                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "chat-files");
                     docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}");
@@ -504,6 +501,9 @@ namespace crmApi.Controllers
 
                 try
                 {
+                    var fileReference = request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}";
+                    var fileKey = request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
+
                     string messageQuery = @"
                 INSERT INTO ChatMessages (
                     DiscussionId, 
@@ -542,7 +542,7 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@fileName", audioFile.FileName ?? "voice_message.webm");
                     messageCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
                     messageCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
-                    messageCommand.Parameters.AddWithValue("@fileReference", request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}");
+                    messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
                     messageCommand.Parameters.AddWithValue("@duration", request.Duration ?? (object)DBNull.Value);
 
                     var messageIdResult = await messageCommand.ExecuteScalarAsync();
@@ -557,6 +557,7 @@ namespace crmApi.Controllers
                     FileSize, 
                     MimeType, 
                     FilePath, 
+                    UploadedAt,
                     IDriveUrl, 
                     BucketName, 
                     FileKey
@@ -567,6 +568,7 @@ namespace crmApi.Controllers
                     @fileSize, 
                     @mimeType, 
                     @filePath, 
+                    @uploadedAt,
                     @idriveUrl, 
                     @bucketName, 
                     @fileKey
@@ -579,9 +581,10 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
                     docCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
                     docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "voice-messages");
-                    docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}");
+                    docCommand.Parameters.AddWithValue("@fileKey", fileKey);
 
                     await docCommand.ExecuteNonQueryAsync();
                     await transaction.CommitAsync();
@@ -602,11 +605,12 @@ namespace crmApi.Controllers
                         fileSize = audioFile.Length,
                         mimeType = audioFile.ContentType,
                         idriveUrl = cloudinaryUrl,
-                        fileReference = request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}",
+                        fileReference = fileReference,
                         bucketName = request.BucketName ?? "voice-messages",
-                        fileKey = request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}",
+                        fileKey = fileKey,
                         duration = request.Duration,
-                        hasFile = true
+                        hasFile = true,
+                        filePath = cloudinaryUrl
                     });
                 }
                 catch (Exception dbEx)
@@ -778,7 +782,7 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-            SELECT cm.Duration, md.FileName, md.MimeType, md.IDriveUrl
+            SELECT cm.Duration, md.FileName, md.MimeType, md.IDriveUrl, md.FilePath
             FROM ChatMessages cm
             LEFT JOIN MessageDocuments md ON cm.Id = md.MessageId
             WHERE cm.Id = @messageId AND cm.MessageType = @voiceMessageType";
@@ -789,56 +793,44 @@ namespace crmApi.Controllers
 
                 using var reader = await command.ExecuteReaderAsync();
                 if (!await reader.ReadAsync())
+                {
+                    _logger.LogWarning($"Voice message not found for MessageId: {messageId}");
                     return NotFound("Voice message not found");
+                }
 
                 var duration = reader["Duration"];
                 var fileName = reader["FileName"]?.ToString() ?? "voice_message.webm";
                 var mimeType = reader["MimeType"]?.ToString() ?? "audio/webm";
                 var iDriveUrl = reader["IDriveUrl"]?.ToString();
+                var filePath = reader["FilePath"]?.ToString();
 
-                if (string.IsNullOrEmpty(iDriveUrl))
-                    return NotFound("Voice file not found");
+                var audioUrl = iDriveUrl ?? filePath;
 
-                var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-                var secretKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-                var serviceUrl = Environment.GetEnvironmentVariable("AWS_S3_SERVICE_URL");
-
-                using var client = new AmazonS3Client(
-                    accessKey,
-                    secretKey,
-                    new AmazonS3Config
-                    {
-                        ServiceURL = serviceUrl,
-                        ForcePathStyle = true
-                    }
-                );
-
-                var bucketName = "voice-messages";
-                var key = fileName;
-                var presignedUrl = client.GetPreSignedURL(new Amazon.S3.Model.GetPreSignedUrlRequest
+                if (string.IsNullOrEmpty(audioUrl))
                 {
-                    BucketName = bucketName,
-                    Key = key,
-                    Verb = HttpVerb.GET,
-                    Expires = DateTime.UtcNow.AddHours(1),
-                    ResponseHeaderOverrides = new Amazon.S3.Model.ResponseHeaderOverrides
-                    {
-                        ContentType = mimeType
-                    }
-                });
+                    _logger.LogWarning($"No audio URL found for MessageId: {messageId}");
+                    return NotFound("Voice file URL not found");
+                }
+
+                _logger.LogInformation($"Returning voice message: MessageId={messageId}, URL={audioUrl}, Duration={duration}");
 
                 return Ok(new
                 {
-                    audioUrl = iDriveUrl,
+                    audioUrl = audioUrl,
                     fileName = fileName,
                     mimeType = mimeType,
-                    duration = duration
+                    duration = duration,
+                    messageId = messageId
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving voice message");
-                return StatusCode(500, new { message = "Error retrieving voice message", error = ex.Message });
+                _logger.LogError(ex, $"Error retrieving voice message for MessageId: {messageId}");
+                return StatusCode(500, new
+                {
+                    message = "Error retrieving voice message",
+                    error = ex.Message
+                });
             }
         }
 
@@ -888,129 +880,224 @@ namespace crmApi.Controllers
         {
             try
             {
+                if (file == null || file.Length == 0)
+                {
+                    return BadRequest(new { message = "No file provided" });
+                }
+
+                _logger.LogInformation($"Processing task with file upload: {file.FileName}, Size: {file.Length}");
+
+                string cloudinaryUrl;
+                try
+                {
+                    cloudinaryUrl = await UploadToCloudinary(file, file.FileName);
+                    _logger.LogInformation($"Task file uploaded to Cloudinary: {cloudinaryUrl}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Cloudinary file upload failed for task");
+                    return StatusCode(500, new { message = $"File upload failed: {ex.Message}" });
+                }
+
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-
                 using var transaction = await connection.BeginTransactionAsync();
 
-                var taskTitle = createTaskMessage.TaskTitle ?? createTaskMessage.Content ?? "File Task";
-
-                string taskQuery = @"
-                    INSERT INTO Tasks (Title, Description, Status, Priority, DueDate, EstimatedTime, SortOrder, CreatedByUserId, CreatedAt)
-                    VALUES (@Title, @Description, @Status, @Priority, @DueDate, @EstimatedTime, @SortOrder, @CreatedByUserId, @CreatedAt);
-                    SELECT LAST_INSERT_ID();";
-
-                using var taskCommand = new MySqlCommand(taskQuery, connection, transaction);
-                taskCommand.Parameters.AddWithValue("@Title", taskTitle);
-                taskCommand.Parameters.AddWithValue("@Description", createTaskMessage.TaskDescription ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
-                taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
-                taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@SortOrder", 0);
-                taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
-
-                var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
-
-                if (createTaskMessage.AssignedUserIds?.Any() == true)
+                try
                 {
-                    string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
-                    var values = createTaskMessage.AssignedUserIds.Select((_, index) => $"(@TaskId, @UserId{index}, @AssignedAt)");
-                    assignQuery += string.Join(", ", values);
+                    var taskTitle = createTaskMessage.TaskTitle ?? createTaskMessage.Content ?? "File Task";
 
-                    using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
-                    assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
-                    for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
+                    string taskQuery = @"
+                INSERT INTO Tasks (Title, Description, Status, Priority, DueDate, EstimatedTime, SortOrder, CreatedByUserId, CreatedAt)
+                VALUES (@Title, @Description, @Status, @Priority, @DueDate, @EstimatedTime, @SortOrder, @CreatedByUserId, @CreatedAt);
+                SELECT LAST_INSERT_ID();";
+
+                    using var taskCommand = new MySqlCommand(taskQuery, connection, transaction);
+                    taskCommand.Parameters.AddWithValue("@Title", taskTitle);
+                    taskCommand.Parameters.AddWithValue("@Description", createTaskMessage.TaskDescription ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
+                    taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
+                    taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@SortOrder", 0);
+                    taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
+                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+
+                    var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
+                    _logger.LogInformation($"Task created with ID: {taskId}");
+
+                    if (createTaskMessage.AssignedUserIds?.Any() == true)
                     {
-                        assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
+                        string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
+                        var values = createTaskMessage.AssignedUserIds.Select((_, index) => $"(@TaskId, @UserId{index}, @AssignedAt)");
+                        assignQuery += string.Join(", ", values);
+
+                        using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
+                        assignCommand.Parameters.AddWithValue("@TaskId", taskId);
+                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                        for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
+                        {
+                            assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
+                        }
+                        await assignCommand.ExecuteNonQueryAsync();
                     }
-                    await assignCommand.ExecuteNonQueryAsync();
-                }
 
-                string fileName = null;
-                string originalFileName = null;
-                string mimeType = null;
-                string filePath = null;
-                long fileSize = 0;
+                    if (createTaskMessage.ClientIds?.Any() == true)
+                    {
+                        string clientQuery = "INSERT INTO TaskClients (TaskId, ClientId) VALUES ";
+                        var clientValues = createTaskMessage.ClientIds.Select((_, index) => $"(@TaskId, @ClientId{index})");
+                        clientQuery += string.Join(", ", clientValues);
 
-                if (file != null && file.Length > 0)
-                {
-                    var uploadsFolder = Path.Combine("wwwroot", "uploads", "tasks");
-                    if (!Directory.Exists(uploadsFolder))
-                        Directory.CreateDirectory(uploadsFolder);
+                        using var clientCommand = new MySqlCommand(clientQuery, connection, transaction);
+                        clientCommand.Parameters.AddWithValue("@TaskId", taskId);
+                        for (int i = 0; i < createTaskMessage.ClientIds.Count; i++)
+                        {
+                            clientCommand.Parameters.AddWithValue($"@ClientId{i}", createTaskMessage.ClientIds[i]);
+                        }
+                        await clientCommand.ExecuteNonQueryAsync();
+                    }
 
-                    fileName = $"{Guid.NewGuid()}_{file.FileName}";
-                    filePath = Path.Combine(uploadsFolder, fileName);
+                    if (createTaskMessage.ProjectIds?.Any() == true)
+                    {
+                        string projectQuery = "INSERT INTO TaskProjects (TaskId, ProjectId) VALUES ";
+                        var projectValues = createTaskMessage.ProjectIds.Select((_, index) => $"(@TaskId, @ProjectId{index})");
+                        projectQuery += string.Join(", ", projectValues);
 
-                    using var stream = new FileStream(filePath, FileMode.Create);
-                    await file.CopyToAsync(stream);
+                        using var projectCommand = new MySqlCommand(projectQuery, connection, transaction);
+                        projectCommand.Parameters.AddWithValue("@TaskId", taskId);
+                        for (int i = 0; i < createTaskMessage.ProjectIds.Count; i++)
+                        {
+                            projectCommand.Parameters.AddWithValue($"@ProjectId{i}", createTaskMessage.ProjectIds[i]);
+                        }
+                        await projectCommand.ExecuteNonQueryAsync();
+                    }
 
-                    originalFileName = file.FileName;
-                    mimeType = file.ContentType;
-                    fileSize = file.Length;
-                }
+                    var fileReference = $"task_file_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{file.FileName}";
+                    var fileKey = $"task-files/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}";
 
-                string messageQuery = @"
-                    INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, TaskId, FileReference, CreatedAt)
-                    VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @taskId, @fileReference, @createdAt);
-                    SELECT LAST_INSERT_ID();";
+                    string messageQuery = @"
+                INSERT INTO ChatMessages (
+                    DiscussionId, 
+                    SenderId, 
+                    ReceiverId, 
+                    Content, 
+                    MessageType, 
+                    TaskId, 
+                    HasFile,
+                    FileName,
+                    MimeType,
+                    FileSize,
+                    FileReference,
+                    CreatedAt
+                ) VALUES (
+                    @discussionId, 
+                    @senderId, 
+                    @receiverId, 
+                    @content, 
+                    @messageType, 
+                    @taskId, 
+                    @hasFile,
+                    @fileName,
+                    @mimeType,
+                    @fileSize,
+                    @fileReference,
+                    @createdAt
+                );
+                SELECT LAST_INSERT_ID();";
 
-                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
-                messageCommand.Parameters.AddWithValue("@discussionId", createTaskMessage.DiscussionId);
-                messageCommand.Parameters.AddWithValue("@senderId", createTaskMessage.SenderId);
-                messageCommand.Parameters.AddWithValue("@receiverId", createTaskMessage.ReceiverId ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
-                messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
-                messageCommand.Parameters.AddWithValue("@taskId", taskId);
-                messageCommand.Parameters.AddWithValue("@fileReference", fileName ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                    using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                    messageCommand.Parameters.AddWithValue("@discussionId", createTaskMessage.DiscussionId);
+                    messageCommand.Parameters.AddWithValue("@senderId", createTaskMessage.SenderId);
+                    messageCommand.Parameters.AddWithValue("@receiverId", createTaskMessage.ReceiverId ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
+                    messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
+                    messageCommand.Parameters.AddWithValue("@taskId", taskId);
+                    messageCommand.Parameters.AddWithValue("@hasFile", 1);
+                    messageCommand.Parameters.AddWithValue("@fileName", file.FileName);
+                    messageCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
+                    messageCommand.Parameters.AddWithValue("@fileSize", file.Length);
+                    messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
 
-                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
+                    var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
+                    _logger.LogInformation($"Task message created with ID: {messageId}");
 
-                if (!string.IsNullOrEmpty(fileName))
-                {
                     string docQuery = @"
-                        INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, MimeType, FileSize, FilePath)
-                        VALUES (@messageId, @fileName, @originalFileName, @mimeType, @fileSize, @filePath)";
+                INSERT INTO MessageDocuments (
+                    MessageId, 
+                    FileName, 
+                    OriginalFileName, 
+                    FileSize, 
+                    MimeType, 
+                    FilePath, 
+                    UploadedAt,
+                    IDriveUrl, 
+                    BucketName, 
+                    FileKey
+                ) VALUES (
+                    @messageId, 
+                    @fileName, 
+                    @originalFileName, 
+                    @fileSize, 
+                    @mimeType, 
+                    @filePath, 
+                    @uploadedAt,
+                    @idriveUrl, 
+                    @bucketName, 
+                    @fileKey
+                )";
 
                     using var docCommand = new MySqlCommand(docQuery, connection, transaction);
                     docCommand.Parameters.AddWithValue("@messageId", messageId);
-                    docCommand.Parameters.AddWithValue("@fileName", fileName);
-                    docCommand.Parameters.AddWithValue("@originalFileName", originalFileName);
-                    docCommand.Parameters.AddWithValue("@mimeType", mimeType);
-                    docCommand.Parameters.AddWithValue("@fileSize", fileSize);
-                    docCommand.Parameters.AddWithValue("@filePath", filePath ?? (object)DBNull.Value);
+                    docCommand.Parameters.AddWithValue("@fileName", file.FileName);
+                    docCommand.Parameters.AddWithValue("@originalFileName", file.FileName);
+                    docCommand.Parameters.AddWithValue("@fileSize", file.Length);
+                    docCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
+                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
+                    docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@bucketName", "task-files");
+                    docCommand.Parameters.AddWithValue("@fileKey", fileKey);
+
                     await docCommand.ExecuteNonQueryAsync();
+                    _logger.LogInformation($"MessageDocuments record created for task file message");
+
+                    await transaction.CommitAsync();
+                    _logger.LogInformation($"Task message with file completed successfully. MessageId: {messageId}, TaskId: {taskId}");
+
+                    return Ok(new MessageResponse
+                    {
+                        Id = messageId,
+                        DiscussionId = createTaskMessage.DiscussionId,
+                        SenderId = createTaskMessage.SenderId,
+                        ReceiverId = createTaskMessage.ReceiverId,
+                        Content = createTaskMessage.Content,
+                        MessageType = Convert.ToByte(createTaskMessage.MessageType),
+                        TaskId = taskId,
+                        TaskTitle = taskTitle,
+                        TaskDescription = createTaskMessage.TaskDescription,
+                        TaskStatus = Enum.TryParse<crmApi.Models.TaskStatus>(createTaskMessage.TaskStatus, out var status) ? status : (crmApi.Models.TaskStatus?)null,
+                        TaskPriority = Enum.TryParse<crmApi.Models.TaskPriority>(createTaskMessage.TaskPriority, out var priority) ? priority : (crmApi.Models.TaskPriority?)null,
+                        DueDate = createTaskMessage.DueDate,
+                        EstimatedTime = createTaskMessage.EstimatedTime,
+                        AssignedUserIds = createTaskMessage.AssignedUserIds,
+                        ClientIds = createTaskMessage.ClientIds,
+                        ProjectIds = createTaskMessage.ProjectIds,
+                        FileReference = fileReference,
+                        FileName = file.FileName,
+                        MimeType = file.ContentType,
+                        FileSize = file.Length,
+                        CreatedAt = DateTime.UtcNow,
+                        HasFile = true,
+                        FileUrl = cloudinaryUrl
+                    });
                 }
-
-                await transaction.CommitAsync();
-
-                _logger.LogInformation($"Task message with file created. MessageId: {messageId}, TaskId: {taskId}");
-
-                return Ok(new MessageResponse
+                catch (Exception dbEx)
                 {
-                    Id = messageId,
-                    DiscussionId = createTaskMessage.DiscussionId,
-                    SenderId = createTaskMessage.SenderId,
-                    ReceiverId = createTaskMessage.ReceiverId,
-                    Content = createTaskMessage.Content,
-                    MessageType = Convert.ToByte(createTaskMessage.MessageType),
-                    TaskId = taskId,
-                    TaskTitle = taskTitle,
-                    TaskDescription = createTaskMessage.TaskDescription,
-                    TaskStatus = Enum.TryParse<crmApi.Models.TaskStatus>(createTaskMessage.TaskStatus, out var status) ? status : (crmApi.Models.TaskStatus?)null,
-                    TaskPriority = Enum.TryParse<crmApi.Models.TaskPriority>(createTaskMessage.TaskPriority, out var priority) ? priority : (crmApi.Models.TaskPriority?)null,
-                    DueDate = createTaskMessage.DueDate,
-                    EstimatedTime = createTaskMessage.EstimatedTime,
-                    AssignedUserIds = createTaskMessage.AssignedUserIds,
-                    FileReference = fileName,
-                    FileName = originalFileName,
-                    MimeType = mimeType,
-                    FileSize = fileSize,
-                    CreatedAt = DateTime.UtcNow
-                });
+                    await transaction.RollbackAsync();
+                    _logger.LogError(dbEx, "Database transaction failed for task with file");
+                    throw;
+                }
             }
             catch (Exception ex)
             {
@@ -1019,136 +1106,202 @@ namespace crmApi.Controllers
             }
         }
 
-        [HttpPost("messages/send-task-with-voice")]
+
+       [HttpPost("messages/send-task-with-voice")]
         public async Task<ActionResult<MessageResponse>> SendTaskWithVoice([FromForm] CreateTaskMessageWithVoiceDto createTaskMessage, IFormFile audioFile)
         {
             try
             {
+                if (audioFile == null || audioFile.Length == 0)
+                {
+                    return BadRequest(new { message = "No audio file provided" });
+                }
+
+                _logger.LogInformation($"Processing task with voice upload: {audioFile.FileName}, Size: {audioFile.Length}");
+
+                string cloudinaryUrl;
+                try
+                {
+                    cloudinaryUrl = await UploadAudioToCloudinary(audioFile, audioFile.FileName);
+                    _logger.LogInformation($"Task audio uploaded to Cloudinary: {cloudinaryUrl}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Cloudinary audio upload failed for task");
+                    return StatusCode(500, new { message = $"Audio upload failed: {ex.Message}" });
+                }
+
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-
                 using var transaction = await connection.BeginTransactionAsync();
 
-                var taskTitle = createTaskMessage.TaskTitle ?? createTaskMessage.Content ?? "Voice Task";
-
-                string taskQuery = @"
-            INSERT INTO Tasks (Title, Description, Status, Priority, DueDate, EstimatedTime, SortOrder, CreatedByUserId, CreatedAt)
-            VALUES (@Title, @Description, @Status, @Priority, @DueDate, @EstimatedTime, @SortOrder, @CreatedByUserId, @CreatedAt);
-            SELECT LAST_INSERT_ID();";
-
-                using var taskCommand = new MySqlCommand(taskQuery, connection, transaction);
-                taskCommand.Parameters.AddWithValue("@Title", taskTitle);
-                taskCommand.Parameters.AddWithValue("@Description", createTaskMessage.TaskDescription ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
-                taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
-                taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@SortOrder", 0);
-                taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
-
-                var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
-
-                if (createTaskMessage.AssignedUserIds?.Any() == true)
+                try
                 {
-                    string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
-                    var values = createTaskMessage.AssignedUserIds.Select((_, index) => $"(@TaskId, @UserId{index}, @AssignedAt)");
-                    assignQuery += string.Join(", ", values);
+                    var taskTitle = createTaskMessage.TaskTitle ?? createTaskMessage.Content ?? "Voice Task";
 
-                    using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
-                    assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
-                    for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
+                    string taskQuery = @"
+                INSERT INTO Tasks (Title, Description, Status, Priority, DueDate, EstimatedTime, SortOrder, CreatedByUserId, CreatedAt)
+                VALUES (@Title, @Description, @Status, @Priority, @DueDate, @EstimatedTime, @SortOrder, @CreatedByUserId, @CreatedAt);
+                SELECT LAST_INSERT_ID();";
+
+                    using var taskCommand = new MySqlCommand(taskQuery, connection, transaction);
+                    taskCommand.Parameters.AddWithValue("@Title", taskTitle);
+                    taskCommand.Parameters.AddWithValue("@Description", createTaskMessage.TaskDescription ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
+                    taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
+                    taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
+                    taskCommand.Parameters.AddWithValue("@SortOrder", 0);
+                    taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
+                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+
+                    var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
+                    _logger.LogInformation($"Task created with ID: {taskId}");
+
+                    if (createTaskMessage.AssignedUserIds?.Any() == true)
                     {
-                        assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
+                        string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
+                        var values = createTaskMessage.AssignedUserIds.Select((_, index) => $"(@TaskId, @UserId{index}, @AssignedAt)");
+                        assignQuery += string.Join(", ", values);
+
+                        using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
+                        assignCommand.Parameters.AddWithValue("@TaskId", taskId);
+                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                        for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
+                        {
+                            assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
+                        }
+                        await assignCommand.ExecuteNonQueryAsync();
                     }
-                    await assignCommand.ExecuteNonQueryAsync();
-                }
 
-                string fileName = null;
-                string originalFileName = null;
-                string mimeType = null;
-                string filePath = null;
-                long fileSize = 0;
+                    var fileReference = $"task_voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}";
+                    var fileKey = $"task-voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
 
-                if (audioFile != null && audioFile.Length > 0)
-                {
-                    var uploadsFolder = Path.Combine("wwwroot", "Uploads", "voice", "tasks");
-                    if (!Directory.Exists(uploadsFolder))
-                        Directory.CreateDirectory(uploadsFolder);
+                    string messageQuery = @"
+                INSERT INTO ChatMessages (
+                    DiscussionId, 
+                    SenderId, 
+                    ReceiverId, 
+                    Content, 
+                    MessageType, 
+                    TaskId, 
+                    HasFile,
+                    FileName,
+                    MimeType,
+                    FileSize,
+                    FileReference, 
+                    Duration, 
+                    CreatedAt
+                ) VALUES (
+                    @discussionId, 
+                    @senderId, 
+                    @receiverId, 
+                    @content, 
+                    @messageType, 
+                    @taskId, 
+                    @hasFile,
+                    @fileName,
+                    @mimeType,
+                    @fileSize,
+                    @fileReference, 
+                    @duration, 
+                    @createdAt
+                );
+                SELECT LAST_INSERT_ID();";
 
-                    fileName = $"{Guid.NewGuid()}.webm";
-                    filePath = Path.Combine(uploadsFolder, fileName);
+                    using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                    messageCommand.Parameters.AddWithValue("@discussionId", createTaskMessage.DiscussionId);
+                    messageCommand.Parameters.AddWithValue("@senderId", createTaskMessage.SenderId);
+                    messageCommand.Parameters.AddWithValue("@receiverId", createTaskMessage.ReceiverId ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
+                    messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
+                    messageCommand.Parameters.AddWithValue("@taskId", taskId);
+                    messageCommand.Parameters.AddWithValue("@hasFile", 1);
+                    messageCommand.Parameters.AddWithValue("@fileName", audioFile.FileName ?? "task_voice.webm");
+                    messageCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
+                    messageCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
+                    messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
+                    messageCommand.Parameters.AddWithValue("@duration", createTaskMessage.Duration ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
 
-                    using var stream = new FileStream(filePath, FileMode.Create);
-                    await audioFile.CopyToAsync(stream);
+                    var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
+                    _logger.LogInformation($"Task message created with ID: {messageId}");
 
-                    originalFileName = audioFile.FileName;
-                    mimeType = audioFile.ContentType;
-                    fileSize = audioFile.Length;
-                }
-
-                string messageQuery = @"
-            INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, TaskId, FileReference, Duration, CreatedAt)
-            VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @taskId, @fileReference, @duration, @createdAt);
-            SELECT LAST_INSERT_ID();";
-
-                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
-                messageCommand.Parameters.AddWithValue("@discussionId", createTaskMessage.DiscussionId);
-                messageCommand.Parameters.AddWithValue("@senderId", createTaskMessage.SenderId);
-                messageCommand.Parameters.AddWithValue("@receiverId", createTaskMessage.ReceiverId ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
-                messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
-                messageCommand.Parameters.AddWithValue("@taskId", taskId);
-                messageCommand.Parameters.AddWithValue("@fileReference", fileName ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@duration", createTaskMessage.Duration ?? (object)DBNull.Value);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
-
-                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
-
-                if (!string.IsNullOrEmpty(fileName))
-                {
                     string docQuery = @"
-                INSERT INTO MessageDocuments (MessageId, FileName, OriginalFileName, MimeType, FileSize, FilePath)
-                VALUES (@messageId, @fileName, @originalFileName, @mimeType, @fileSize, @filePath)";
+                INSERT INTO MessageDocuments (
+                    MessageId, 
+                    FileName, 
+                    OriginalFileName, 
+                    FileSize, 
+                    MimeType, 
+                    FilePath, 
+                    UploadedAt,
+                    IDriveUrl, 
+                    BucketName, 
+                    FileKey
+                ) VALUES (
+                    @messageId, 
+                    @fileName, 
+                    @originalFileName, 
+                    @fileSize, 
+                    @mimeType, 
+                    @filePath, 
+                    @uploadedAt,
+                    @idriveUrl, 
+                    @bucketName, 
+                    @fileKey
+                )";
 
                     using var docCommand = new MySqlCommand(docQuery, connection, transaction);
                     docCommand.Parameters.AddWithValue("@messageId", messageId);
-                    docCommand.Parameters.AddWithValue("@fileName", fileName);
-                    docCommand.Parameters.AddWithValue("@originalFileName", originalFileName);
-                    docCommand.Parameters.AddWithValue("@mimeType", mimeType);
-                    docCommand.Parameters.AddWithValue("@fileSize", fileSize);
-                    docCommand.Parameters.AddWithValue("@filePath", filePath ?? (object)DBNull.Value);
+                    docCommand.Parameters.AddWithValue("@fileName", audioFile.FileName ?? "task_voice.webm");
+                    docCommand.Parameters.AddWithValue("@originalFileName", audioFile.FileName ?? "task_voice.webm");
+                    docCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
+                    docCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
+                    docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
+                    docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
+                    docCommand.Parameters.AddWithValue("@bucketName", "task-voice-messages");
+                    docCommand.Parameters.AddWithValue("@fileKey", fileKey);
+
                     await docCommand.ExecuteNonQueryAsync();
+                    _logger.LogInformation($"MessageDocuments record created for task voice message");
+
+                    await transaction.CommitAsync();
+                    _logger.LogInformation($"Task message with voice completed successfully. MessageId: {messageId}, TaskId: {taskId}");
+
+                    return Ok(new MessageResponse
+                    {
+                        Id = messageId,
+                        DiscussionId = createTaskMessage.DiscussionId,
+                        SenderId = createTaskMessage.SenderId,
+                        ReceiverId = createTaskMessage.ReceiverId,
+                        Content = createTaskMessage.Content,
+                        MessageType = Convert.ToByte(createTaskMessage.MessageType),
+                        TaskId = taskId,
+                        TaskTitle = taskTitle,
+                        TaskDescription = createTaskMessage.TaskDescription,
+                        TaskStatus = Enum.TryParse<crmApi.Models.TaskStatus>(createTaskMessage.TaskStatus, out var status) ? status : (crmApi.Models.TaskStatus?)null,
+                        TaskPriority = Enum.TryParse<crmApi.Models.TaskPriority>(createTaskMessage.TaskPriority, out var priority) ? priority : (crmApi.Models.TaskPriority?)null,
+                        DueDate = createTaskMessage.DueDate,
+                        EstimatedTime = createTaskMessage.EstimatedTime,
+                        AssignedUserIds = createTaskMessage.AssignedUserIds,
+                        FileReference = fileReference,
+                        FileName = audioFile.FileName,
+                        MimeType = audioFile.ContentType,
+                        FileSize = audioFile.Length,
+                        Duration = createTaskMessage.Duration,
+                        CreatedAt = DateTime.UtcNow,
+                        HasFile = true,
+                        AudioUrl = cloudinaryUrl
+                    });
                 }
-
-                await transaction.CommitAsync();
-
-                _logger.LogInformation($"Task message with voice created. MessageId: {messageId}, TaskId: {taskId}");
-
-                return Ok(new MessageResponse
+                catch (Exception dbEx)
                 {
-                    Id = messageId,
-                    DiscussionId = createTaskMessage.DiscussionId,
-                    SenderId = createTaskMessage.SenderId,
-                    ReceiverId = createTaskMessage.ReceiverId,
-                    Content = createTaskMessage.Content,
-                    MessageType = Convert.ToByte(createTaskMessage.MessageType),
-                    TaskId = taskId,
-                    TaskTitle = taskTitle,
-                    TaskDescription = createTaskMessage.TaskDescription,
-                    TaskStatus = Enum.TryParse<crmApi.Models.TaskStatus>(createTaskMessage.TaskStatus, out var status) ? status : (crmApi.Models.TaskStatus?)null,
-                    TaskPriority = Enum.TryParse<crmApi.Models.TaskPriority>(createTaskMessage.TaskPriority, out var priority) ? priority : (crmApi.Models.TaskPriority?)null,
-                    DueDate = createTaskMessage.DueDate,
-                    EstimatedTime = createTaskMessage.EstimatedTime,
-                    AssignedUserIds = createTaskMessage.AssignedUserIds,
-                    FileReference = fileName,
-                    FileName = originalFileName,
-                    MimeType = mimeType,
-                    FileSize = fileSize,
-                    Duration = createTaskMessage.Duration,
-                    CreatedAt = DateTime.UtcNow
-                });
+                    await transaction.RollbackAsync();
+                    _logger.LogError(dbEx, "Database transaction failed for task with voice");
+                    throw;
+                }
             }
             catch (Exception ex)
             {
@@ -1548,38 +1701,36 @@ namespace crmApi.Controllers
                 var discussionTitle = result?.ToString() ?? "Unknown Discussion";
 
                 string query = @"
-                    SELECT 
-                        m.Id as MessageId,
-                        t.Id as TaskId,
-                        t.Title as TaskTitle,
-                        t.Description as TaskDescription,
-                        t.Status as TaskStatus,
-                        t.Priority as TaskPriority,
-                        m.Content,
-                        m.CreatedAt,
-                        t.UpdatedAt,
-                        t.DueDate,
-                        t.EstimatedTime,
-                        creator.Ad as CreatorFirstName,
-                        creator.Soyad as CreatorLastName,
-                        updater.Ad as UpdaterFirstName,
-                        updater.Soyad as UpdaterLastName,
-                        m.FileReference,
-                        CASE 
-                            WHEN m.MessageType = 3 THEN CONCAT('https://yourdomain.com/uploads/tasks/', m.FileReference)
-                            ELSE NULL 
-                        END as FileUrl,
-                        CASE 
-                            WHEN m.MessageType = 2 THEN CONCAT('https://yourdomain.com/Uploads/voice/tasks/', m.FileReference)
-                            ELSE NULL 
-                        END as VoiceRecordUrl
-                    FROM ChatMessages m
-                    INNER JOIN Tasks t ON m.TaskId = t.Id
-                    LEFT JOIN KullaniciBilgileri creator ON t.CreatedByUserId = creator.KullaniciID
-                    LEFT JOIN KullaniciBilgileri updater ON t.UpdatedByUserId = updater.KullaniciID
-                    WHERE m.DiscussionId = @discussionId 
-                        AND m.TaskId IS NOT NULL
-                    ORDER BY m.CreatedAt DESC";
+                                SELECT 
+                                    m.Id as MessageId,
+                                    t.Id as TaskId,
+                                    t.Title as TaskTitle,
+                                    t.Description as TaskDescription,
+                                    t.Status as TaskStatus,
+                                    t.Priority as TaskPriority,
+                                    m.Content,
+                                    m.CreatedAt,
+                                    t.UpdatedAt,
+                                    t.DueDate,
+                                    t.EstimatedTime,
+                                    creator.Ad as CreatorFirstName,
+                                    creator.Soyad as CreatorLastName,
+                                    updater.Ad as UpdaterFirstName,
+                                    updater.Soyad as UpdaterLastName,
+                                    m.FileReference,
+                                    m.MessageType,
+                                    m.FileName,
+                                    m.HasFile,
+                                    md.IDriveUrl,
+                                    md.FileName as DocumentFileName
+                                FROM ChatMessages m
+                                INNER JOIN Tasks t ON m.TaskId = t.Id
+                                LEFT JOIN KullaniciBilgileri creator ON t.CreatedByUserId = creator.KullaniciID
+                                LEFT JOIN KullaniciBilgileri updater ON t.UpdatedByUserId = updater.KullaniciID
+                                LEFT JOIN MessageDocuments md ON m.Id = md.MessageId
+                                WHERE m.DiscussionId = @discussionId 
+                                    AND m.TaskId IS NOT NULL
+                                ORDER BY m.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
@@ -1589,6 +1740,31 @@ namespace crmApi.Controllers
 
                 while (await reader.ReadAsync())
                 {
+                    var messageType = Convert.ToInt32(reader["MessageType"]);
+                    var hasFile = Convert.ToBoolean(reader["HasFile"]);
+                    var DocumentFileName = reader["FileName"]?.ToString() ?? reader["DocumentFileName"]?.ToString() ?? "";
+                    var idriveUrl = reader["IDriveUrl"]?.ToString() ?? "";
+                    var content = reader["Content"]?.ToString() ?? "";
+
+                    string fileDisplay = "";
+                    string fileUrl = "";
+                    string voiceDisplay = "";
+                    string voiceUrl = "";
+
+                    if (hasFile && !string.IsNullOrEmpty(idriveUrl))
+                    {
+                        if (messageType == 3 || DocumentFileName.Contains("voice") || DocumentFileName.Contains(".webm"))
+                        {
+                            voiceDisplay = !string.IsNullOrEmpty(DocumentFileName) ? DocumentFileName : "Voice Message";
+                            voiceUrl = idriveUrl;
+                        }
+                        else
+                        {
+                            fileDisplay = !string.IsNullOrEmpty(DocumentFileName) ? DocumentFileName : "File Attachment";
+                            fileUrl = idriveUrl;
+                        }
+                    }
+
                     tasks.Add(new
                     {
                         MessageId = Convert.ToInt32(reader["MessageId"]),
@@ -1597,13 +1773,15 @@ namespace crmApi.Controllers
                         TaskDescription = Convert.IsDBNull(reader["TaskDescription"]) ? "" : reader["TaskDescription"].ToString(),
                         TaskStatus = reader["TaskStatus"].ToString(),
                         TaskPriority = reader["TaskPriority"].ToString(),
-                        Content = reader["Content"].ToString(),
+                        Content = content,
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
                         UpdatedAt = Convert.IsDBNull(reader["UpdatedAt"]) ? (DateTime?)null : Convert.ToDateTime(reader["UpdatedAt"]),
                         CreatedBy = $"{reader["CreatorFirstName"]} {reader["CreatorLastName"]}".Trim(),
                         UpdatedBy = Convert.IsDBNull(reader["UpdaterFirstName"]) ? "" : $"{reader["UpdaterFirstName"]} {reader["UpdaterLastName"]}".Trim(),
-                        FileUrl = Convert.IsDBNull(reader["FileUrl"]) ? "" : reader["FileUrl"].ToString(),
-                        VoiceRecordUrl = Convert.IsDBNull(reader["VoiceRecordUrl"]) ? "" : reader["VoiceRecordUrl"].ToString(),
+                        FileDisplay = fileDisplay,
+                        FileUrl = fileUrl,
+                        VoiceDisplay = voiceDisplay,
+                        VoiceUrl = voiceUrl,
                         DueDate = Convert.IsDBNull(reader["DueDate"]) ? (DateTime?)null : Convert.ToDateTime(reader["DueDate"]),
                         EstimatedTime = Convert.IsDBNull(reader["EstimatedTime"]) ? "" : reader["EstimatedTime"].ToString()
                     });
@@ -1626,8 +1804,8 @@ namespace crmApi.Controllers
                 worksheet.Cells[1, 10].Value = "Updated At";
                 worksheet.Cells[1, 11].Value = "Due Date";
                 worksheet.Cells[1, 12].Value = "Estimated Time";
-                worksheet.Cells[1, 13].Value = "File URL";
-                worksheet.Cells[1, 14].Value = "Voice Record URL";
+                worksheet.Cells[1, 13].Value = "File Attachment";
+                worksheet.Cells[1, 14].Value = "Voice Recording";
                 worksheet.Cells[1, 15].Value = "Assigned Users";
                 worksheet.Cells[1, 16].Value = "Clients";
                 worksheet.Cells[1, 17].Value = "Projects";
@@ -1656,15 +1834,51 @@ namespace crmApi.Controllers
                     worksheet.Cells[row, 10].Value = task.UpdatedAt?.ToString("yyyy-MM-dd HH:mm:ss");
                     worksheet.Cells[row, 11].Value = task.DueDate?.ToString("yyyy-MM-dd HH:mm:ss");
                     worksheet.Cells[row, 12].Value = task.EstimatedTime;
-                    worksheet.Cells[row, 13].Value = task.FileUrl;
-                    worksheet.Cells[row, 14].Value = task.VoiceRecordUrl;
+
+                    if (!string.IsNullOrEmpty(task.FileDisplay) && !string.IsNullOrEmpty(task.FileUrl))
+                    {
+                        try
+                        {
+                            worksheet.Cells[row, 13].Hyperlink = new Uri(task.FileUrl);
+                            worksheet.Cells[row, 13].Value = task.FileDisplay;
+                            worksheet.Cells[row, 13].Style.Font.UnderLine = true;
+                            worksheet.Cells[row, 13].Style.Font.Color.SetColor(System.Drawing.Color.Blue);
+                        }
+                        catch (UriFormatException)
+                        {
+                            worksheet.Cells[row, 13].Value = task.FileDisplay;
+                        }
+                    }
+                    else
+                    {
+                        worksheet.Cells[row, 13].Value = "";
+                    }
+
+                    if (!string.IsNullOrEmpty(task.VoiceDisplay) && !string.IsNullOrEmpty(task.VoiceUrl))
+                    {
+                        try
+                        {
+                            worksheet.Cells[row, 14].Hyperlink = new Uri(task.VoiceUrl);
+                            worksheet.Cells[row, 14].Value = task.VoiceDisplay;
+                            worksheet.Cells[row, 14].Style.Font.UnderLine = true;
+                            worksheet.Cells[row, 14].Style.Font.Color.SetColor(System.Drawing.Color.Blue);
+                        }
+                        catch (UriFormatException)
+                        {
+                            worksheet.Cells[row, 14].Value = task.VoiceDisplay;
+                        }
+                    }
+                    else
+                    {
+                        worksheet.Cells[row, 14].Value = "";
+                    }
 
                     var assignedUsers = new List<string>();
                     string userQuery = @"
-                        SELECT u.Ad, u.Soyad 
-                        FROM TaskAssignments ta
-                        INNER JOIN KullaniciBilgileri u ON ta.UserId = u.KullaniciID
-                        WHERE ta.TaskId = @taskId";
+                                            SELECT u.Ad, u.Soyad 
+                                            FROM TaskAssignments ta
+                                            INNER JOIN KullaniciBilgileri u ON ta.UserId = u.KullaniciID
+                                            WHERE ta.TaskId = @taskId";
 
                     using var userCommand = new MySqlCommand(userQuery, connection);
                     userCommand.Parameters.AddWithValue("@taskId", task.TaskId);
@@ -1678,10 +1892,10 @@ namespace crmApi.Controllers
 
                     var clients = new List<string>();
                     string clientQuery = @"
-                        SELECT c.first_name 
-                        FROM TaskClients tc
-                        INNER JOIN Clients c ON tc.ClientId = c.Id
-                        WHERE tc.TaskId = @taskId";
+                                            SELECT c.first_name 
+                                            FROM TaskClients tc
+                                            INNER JOIN Clients c ON tc.ClientId = c.Id
+                                            WHERE tc.TaskId = @taskId";
 
                     using var clientCommand = new MySqlCommand(clientQuery, connection);
                     clientCommand.Parameters.AddWithValue("@taskId", task.TaskId);
@@ -1695,10 +1909,10 @@ namespace crmApi.Controllers
 
                     var projects = new List<string>();
                     string projectQuery = @"
-                        SELECT p.title 
-                        FROM TaskProjects tp
-                        INNER JOIN Projects p ON tp.ProjectId = p.Id
-                        WHERE tp.TaskId = @taskId";
+                                            SELECT p.title 
+                                            FROM TaskProjects tp
+                                            INNER JOIN Projects p ON tp.ProjectId = p.Id
+                                            WHERE tp.TaskId = @taskId";
 
                     using var projectCommand = new MySqlCommand(projectQuery, connection);
                     projectCommand.Parameters.AddWithValue("@taskId", task.TaskId);
@@ -1785,7 +1999,6 @@ namespace crmApi.Controllers
                 var cloudinary = new Cloudinary(account);
 
                 using var stream = audioFile.OpenReadStream();
-
                 var uploadParams = new VideoUploadParams()
                 {
                     File = new FileDescription(fileName, stream),
