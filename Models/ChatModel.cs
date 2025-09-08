@@ -99,7 +99,7 @@ namespace crmApi.Models
         public string BucketName { get; set; }
 
         public string FileKey { get; set; }
-
+        public string? IDriveUrl { get; set; }       
         public int? Duration { get; set; }
 
         public DateTime UploadedAt { get; set; } = DateTime.Now;

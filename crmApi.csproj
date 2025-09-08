@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="AWSSDK.S3" Version="4.0.6.12" />
     <PackageReference Include="CloudinaryDotNet" Version="1.27.7" />
+    <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="EPPlus" Version="6.*" />
     <PackageReference Include="Microsoft.AspNetCore.Cors" Version="2.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.8" />

@@ -62,6 +62,19 @@
           }
         }
       },
+      "Dapper/2.1.66": {
+        "type": "package",
+        "compile": {
+          "lib/net8.0/Dapper.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net8.0/Dapper.dll": {
+            "related": ".xml"
+          }
+        }
+      },
       "EPPlus/6.2.19": {
         "type": "package",
         "dependencies": {
@@ -1885,6 +1898,25 @@
         "lib/netstandard1.3/CloudinaryDotNet.xml",
         "lib/netstandard2.0/CloudinaryDotNet.dll",
         "lib/netstandard2.0/CloudinaryDotNet.xml"
+      ]
+    },
+    "Dapper/2.1.66": {
+      "sha512": "/q77jUgDOS+bzkmk3Vy9SiWMaetTw+NOoPAV0xPBsGVAyljd5S6P+4RUW7R3ZUGGr9lDRyPKgAMj2UAOwvqZYw==",
+      "type": "package",
+      "path": "dapper/2.1.66",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "Dapper.png",
+        "dapper.2.1.66.nupkg.sha512",
+        "dapper.nuspec",
+        "lib/net461/Dapper.dll",
+        "lib/net461/Dapper.xml",
+        "lib/net8.0/Dapper.dll",
+        "lib/net8.0/Dapper.xml",
+        "lib/netstandard2.0/Dapper.dll",
+        "lib/netstandard2.0/Dapper.xml",
+        "readme.md"
       ]
     },
     "EPPlus/6.2.19": {
@@ -5675,6 +5707,7 @@
     "net9.0": [
       "AWSSDK.S3 >= 4.0.6.12",
       "CloudinaryDotNet >= 1.27.7",
+      "Dapper >= 2.1.66",
       "EPPlus >= 6.*",
       "Microsoft.AspNetCore.Cors >= 2.3.0",
       "Microsoft.AspNetCore.OpenApi >= 9.0.8",
@@ -5683,31 +5716,24 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\DELL\\.nuget\\packages\\": {},
-    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
+    "C:\\Users\\Lenovo_It_2\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\DELL\\Desktop\\dotnet\\crmApi\\crmApi.csproj",
+      "projectUniqueName": "C:\\Users\\Lenovo_It_2\\Documents\\GitHub\\api-crm\\crmApi.csproj",
       "projectName": "crmApi",
-      "projectPath": "C:\\Users\\DELL\\Desktop\\dotnet\\crmApi\\crmApi.csproj",
-      "packagesPath": "C:\\Users\\DELL\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\DELL\\Desktop\\dotnet\\crmApi\\obj\\",
+      "projectPath": "C:\\Users\\Lenovo_It_2\\Documents\\GitHub\\api-crm\\crmApi.csproj",
+      "packagesPath": "C:\\Users\\Lenovo_It_2\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\Lenovo_It_2\\Documents\\GitHub\\api-crm\\obj\\",
       "projectStyle": "PackageReference",
-      "fallbackFolders": [
-        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
-      ],
       "configFilePaths": [
-        "C:\\Users\\DELL\\AppData\\Roaming\\NuGet\\NuGet.Config",
-        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
-        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        "C:\\Users\\Lenovo_It_2\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net9.0"
       ],
       "sources": {
-        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
@@ -5739,6 +5765,10 @@
           "CloudinaryDotNet": {
             "target": "Package",
             "version": "[1.27.7, )"
+          },
+          "Dapper": {
+            "target": "Package",
+            "version": "[2.1.66, )"
           },
           "EPPlus": {
             "target": "Package",

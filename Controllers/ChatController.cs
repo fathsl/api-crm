@@ -6,6 +6,7 @@ using MySql.Data.MySqlClient;
 using OfficeOpenXml;
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
+using Dapper;
 
 namespace crmApi.Controllers
 {
@@ -739,98 +740,65 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"
-            SELECT md.FileName, md.MimeType, md.IDriveUrl, md.FileSize
-            FROM MessageDocuments md
-            INNER JOIN ChatMessages cm ON md.MessageId = cm.Id
-            WHERE cm.Id = @messageId AND cm.MessageType = @fileMessageType";
+                var document = await connection.QueryFirstOrDefaultAsync(
+                    @"SELECT IDriveUrl, FileName, FileSize, MimeType 
+              FROM MessageDocuments 
+              WHERE MessageId = @MessageId",
+                    new { MessageId = messageId });
 
-                using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@messageId", messageId);
-                command.Parameters.AddWithValue("@fileMessageType", 2);
-
-                using var reader = await command.ExecuteReaderAsync();
-                if (!await reader.ReadAsync())
-                    return NotFound("File not found");
-
-                var fileName = reader["FileName"].ToString();
-                var mimeType = reader["MimeType"].ToString();
-                var IDriveUrl = reader["IDriveUrl"].ToString();
-                var fileSize = reader["FileSize"];
+                if (document == null || string.IsNullOrEmpty(document.IDriveUrl))
+                {
+                    return NotFound("File not found or no URL available");
+                }
 
                 return Ok(new
                 {
-                    downloadUrl = IDriveUrl,
-                    fileName = fileName,
-                    mimeType = mimeType,
-                    fileSize = fileSize
+                    downloadUrl = document.IDriveUrl,
+                    fileUrl = document.IDriveUrl,
+                    idriveUrl = document.IDriveUrl,
+                    fileName = document.FileName,
+                    fileSize = document.FileSize,
+                    mimeType = document.MimeType
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving file");
-                return StatusCode(500, new { message = "Error retrieving file", error = ex.Message });
+                _logger.LogError(ex, $"Error getting message file for MessageId: {messageId}, Error: {ex.Message}");
+                return StatusCode(500, "Error retrieving file");
             }
         }
 
+
+
         [HttpGet("messages/{messageId}/voice")]
-        public async Task<IActionResult> GetVoiceMessage(int messageId)
+        public async Task<IActionResult> GetMessageVoice(int messageId)
         {
             try
             {
-                using var connection = new MySqlConnection(_connectionString);
-                await connection.OpenAsync();
+                await using var connection = new MySqlConnection(_connectionString);
+                var document = await connection.QueryFirstOrDefaultAsync<MessageDocument>(
+                    "SELECT * FROM MessageDocuments WHERE MessageId = @MessageId",
+                    new { MessageId = messageId });
 
-                string query = @"
-            SELECT cm.Duration, md.FileName, md.MimeType, md.IDriveUrl, md.FilePath
-            FROM ChatMessages cm
-            LEFT JOIN MessageDocuments md ON cm.Id = md.MessageId
-            WHERE cm.Id = @messageId AND cm.MessageType = @voiceMessageType";
-
-                using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@messageId", messageId);
-                command.Parameters.AddWithValue("@voiceMessageType", 3);
-
-                using var reader = await command.ExecuteReaderAsync();
-                if (!await reader.ReadAsync())
+                if (document == null)
                 {
-                    _logger.LogWarning($"Voice message not found for MessageId: {messageId}");
                     return NotFound("Voice message not found");
                 }
 
-                var duration = reader["Duration"];
-                var fileName = reader["FileName"]?.ToString() ?? "voice_message.webm";
-                var mimeType = reader["MimeType"]?.ToString() ?? "audio/webm";
-                var iDriveUrl = reader["IDriveUrl"]?.ToString();
-                var filePath = reader["FilePath"]?.ToString();
-
-                var audioUrl = iDriveUrl ?? filePath;
-
-                if (string.IsNullOrEmpty(audioUrl))
-                {
-                    _logger.LogWarning($"No audio URL found for MessageId: {messageId}");
-                    return NotFound("Voice file URL not found");
-                }
-
-                _logger.LogInformation($"Returning voice message: MessageId={messageId}, URL={audioUrl}, Duration={duration}");
-
                 return Ok(new
                 {
-                    audioUrl = audioUrl,
-                    fileName = fileName,
-                    mimeType = mimeType,
-                    duration = duration,
-                    messageId = messageId
+                    audioUrl = document.IDriveUrl,
+                    fileUrl = document.IDriveUrl,
+                    idriveUrl = document.IDriveUrl,
+                    fileName = document.FileName,
+                    fileSize = document.FileSize,
+                    mimeType = document.MimeType
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error retrieving voice message for MessageId: {messageId}");
-                return StatusCode(500, new
-                {
-                    message = "Error retrieving voice message",
-                    error = ex.Message
-                });
+                _logger.LogError(ex, "Error getting voice message");
+                return StatusCode(500, "Error retrieving voice message");
             }
         }
 
@@ -940,6 +908,7 @@ namespace crmApi.Controllers
                             assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
                         }
                         await assignCommand.ExecuteNonQueryAsync();
+                        _logger.LogInformation($"Assigned users to task ID: {taskId}");
                     }
 
                     if (createTaskMessage.ClientIds?.Any() == true)
@@ -955,6 +924,7 @@ namespace crmApi.Controllers
                             clientCommand.Parameters.AddWithValue($"@ClientId{i}", createTaskMessage.ClientIds[i]);
                         }
                         await clientCommand.ExecuteNonQueryAsync();
+                        _logger.LogInformation($"Assigned clients to task ID: {taskId}");
                     }
 
                     if (createTaskMessage.ProjectIds?.Any() == true)
@@ -970,6 +940,7 @@ namespace crmApi.Controllers
                             projectCommand.Parameters.AddWithValue($"@ProjectId{i}", createTaskMessage.ProjectIds[i]);
                         }
                         await projectCommand.ExecuteNonQueryAsync();
+                        _logger.LogInformation($"Assigned projects to task ID: {taskId}");
                     }
 
                     var fileReference = $"task_file_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{file.FileName}";
@@ -1045,7 +1016,8 @@ namespace crmApi.Controllers
                     @idriveUrl, 
                     @bucketName, 
                     @fileKey
-                )";
+                );
+                SELECT LAST_INSERT_ID();";
 
                     using var docCommand = new MySqlCommand(docQuery, connection, transaction);
                     docCommand.Parameters.AddWithValue("@messageId", messageId);
@@ -1059,8 +1031,12 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@bucketName", "task-files");
                     docCommand.Parameters.AddWithValue("@fileKey", fileKey);
 
-                    await docCommand.ExecuteNonQueryAsync();
-                    _logger.LogInformation($"MessageDocuments record created for task file message");
+                    var rowsAffected = await docCommand.ExecuteNonQueryAsync();
+                    if (rowsAffected == 0)
+                    {
+                        throw new Exception("Failed to insert into MessageDocuments");
+                    }
+                    _logger.LogInformation($"MessageDocuments record created for message ID: {messageId}, IDriveUrl: {cloudinaryUrl}");
 
                     await transaction.CommitAsync();
                     _logger.LogInformation($"Task message with file completed successfully. MessageId: {messageId}, TaskId: {taskId}");
@@ -1089,25 +1065,26 @@ namespace crmApi.Controllers
                         FileSize = file.Length,
                         CreatedAt = DateTime.UtcNow,
                         HasFile = true,
-                        FileUrl = cloudinaryUrl
+                        FileUrl = cloudinaryUrl,
+                        IDriveUrl = cloudinaryUrl
                     });
                 }
                 catch (Exception dbEx)
                 {
                     await transaction.RollbackAsync();
-                    _logger.LogError(dbEx, "Database transaction failed for task with file");
+                    _logger.LogError(dbEx, $"Database transaction failed for task with file. Message: {dbEx.Message}");
                     throw;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating task message with file");
+                _logger.LogError(ex, $"Error creating task message with file: {ex.Message}");
                 return StatusCode(500, new { message = "Error creating task message with file", error = ex.Message });
             }
         }
 
 
-       [HttpPost("messages/send-task-with-voice")]
+        [HttpPost("messages/send-task-with-voice")]
         public async Task<ActionResult<MessageResponse>> SendTaskWithVoice([FromForm] CreateTaskMessageWithVoiceDto createTaskMessage, IFormFile audioFile)
         {
             try
