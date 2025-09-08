@@ -343,5 +343,57 @@ namespace crmApi.Models
         public string ContentType { get; set; } = string.Empty;
     }
 
+    public class DiscussionTasksAndMediaResponseDto
+    {
+        public int DiscussionId { get; set; }
+        public List<TaskWithMediaDto> Tasks { get; set; } = new();
+        public List<ChatDocumentDto> Documents { get; set; } = new();
+        public List<ChatVoiceRecordDto> VoiceRecords { get; set; } = new();
+    }
+
+
+    public class TaskWithMediaDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public Models.TaskStatus Status { get; set; }
+        public TaskPriority Priority { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string? EstimatedTime { get; set; }
+        public int SortOrder { get; set; }
+        public int CreatedByUserId { get; set; }
+        public string CreatedByUserName { get; set; } = string.Empty;
+        public DateTime CreatedAt { get; set; }
+        public int? UpdatedByUserId { get; set; }
+        public string? UpdatedByUserName { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+        public int? DiscussionId { get; set; }
+        public List<UserResponseDto> AssignedUsers { get; set; } = new();
+    }
+
+
+    public class ChatDocumentDto
+    {
+        public int Id { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string? FilePath { get; set; }
+        public long FileSize { get; set; }
+        public DateTime UploadedAt { get; set; }
+        public int UploadedByUserId { get; set; }
+        public string? ContentType { get; set; }
+    }
+
+
+    public class ChatVoiceRecordDto
+    {
+        public int Id { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string? FilePath { get; set; }
+        public double? Duration { get; set; }
+        public DateTime RecordedAt { get; set; }
+        public int RecordedByUserId { get; set; }
+        public long? FileSize { get; set; }
+    }
 
 }
