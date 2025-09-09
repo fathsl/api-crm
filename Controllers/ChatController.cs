@@ -769,8 +769,6 @@ namespace crmApi.Controllers
             }
         }
 
-
-
         [HttpGet("messages/{messageId}/voice")]
         public async Task<IActionResult> GetMessageVoice(int messageId)
         {
@@ -2031,7 +2029,7 @@ namespace crmApi.Controllers
                     }
                 }
 
-                
+
                 var tasks = new List<TaskWithMediaDto>();
                 if (taskIds.Any())
                 {
@@ -2091,7 +2089,6 @@ namespace crmApi.Controllers
 
                     }
 
-                    // Get assigned users for tasks
                     if (tasks.Any())
                     {
                         var allAssignedUsers = new Dictionary<int, List<UserResponseDto>>();
@@ -2209,9 +2206,130 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Tartışma görevleri ve medya alınırken hata oluştu", error = ex.Message });
             }
         }
+        
+        [HttpPost("discussions/{discussionId}/create-task-with-message")]
+        public async Task<ActionResult<MessageResponse>> CreateTaskWithMessage(int discussionId, [FromBody] CreateTaskMessageDto createTaskMessage)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+                using var transaction = await connection.BeginTransactionAsync();
 
+                var taskTitle = createTaskMessage.TaskTitle ?? createTaskMessage.Content ?? "Task";
 
+                string taskQuery = @"
+                    INSERT INTO Tasks (Title, Description, Status, Priority, DueDate, EstimatedTime, SortOrder, CreatedByUserId, CreatedAt)
+                    VALUES (@Title, @Description, @Status, @Priority, @DueDate, @EstimatedTime, @SortOrder, @CreatedByUserId, @CreatedAt);
+                    SELECT LAST_INSERT_ID();";
 
+                using var taskCommand = new MySqlCommand(taskQuery, connection, transaction);
+                taskCommand.Parameters.AddWithValue("@Title", taskTitle);
+                taskCommand.Parameters.AddWithValue("@Description", createTaskMessage.TaskDescription ?? (object)DBNull.Value);
+                taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
+                taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
+                taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
+                taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
+                taskCommand.Parameters.AddWithValue("@SortOrder", createTaskMessage.SortOrder ?? 0);
+                taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
+                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+
+                var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
+                _logger.LogInformation($"Task created with ID: {taskId}");
+
+                if (createTaskMessage.AssignedUserIds?.Any() == true)
+                {
+                    string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
+                    var values = createTaskMessage.AssignedUserIds.Select((_, index) => $"(@TaskId, @UserId{index}, @AssignedAt)");
+                    assignQuery += string.Join(", ", values);
+
+                    using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
+                    assignCommand.Parameters.AddWithValue("@TaskId", taskId);
+                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
+                    {
+                        assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
+                    }
+                    await assignCommand.ExecuteNonQueryAsync();
+                }
+
+                if (createTaskMessage.ClientIds?.Any() == true)
+                {
+                    string clientQuery = "INSERT INTO TaskClients (TaskId, ClientId, AssignedAt) VALUES ";
+                    var clientValues = createTaskMessage.ClientIds.Select((_, index) => $"(@TaskId, @ClientId{index}, @AssignedAt)");
+                    clientQuery += string.Join(", ", clientValues);
+
+                    using var clientCommand = new MySqlCommand(clientQuery, connection, transaction);
+                    clientCommand.Parameters.AddWithValue("@TaskId", taskId);
+                    clientCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    for (int i = 0; i < createTaskMessage.ClientIds.Count; i++)
+                    {
+                        clientCommand.Parameters.AddWithValue($"@ClientId{i}", createTaskMessage.ClientIds[i]);
+                    }
+                    await clientCommand.ExecuteNonQueryAsync();
+                }
+
+                if (createTaskMessage.ProjectIds?.Any() == true)
+                {
+                    string projectQuery = "INSERT INTO TaskProjects (TaskId, ProjectId, AssignedAt) VALUES ";
+                    var projectValues = createTaskMessage.ProjectIds.Select((_, index) => $"(@TaskId, @ProjectId{index}, @AssignedAt)");
+                    projectQuery += string.Join(", ", projectValues);
+
+                    using var projectCommand = new MySqlCommand(projectQuery, connection, transaction);
+                    projectCommand.Parameters.AddWithValue("@TaskId", taskId);
+                    projectCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    for (int i = 0; i < createTaskMessage.ProjectIds.Count; i++)
+                    {
+                        projectCommand.Parameters.AddWithValue($"@ProjectId{i}", createTaskMessage.ProjectIds[i]);
+                    }
+                    await projectCommand.ExecuteNonQueryAsync();
+                }
+
+                string messageQuery = @"
+                    INSERT INTO ChatMessages (DiscussionId, SenderId, Content, MessageType, TaskId, CreatedAt)
+                    VALUES (@discussionId, @senderId, @content, @messageType, @taskId, @createdAt);
+                    SELECT LAST_INSERT_ID();";
+
+                using var messageCommand = new MySqlCommand(messageQuery, connection, transaction);
+                messageCommand.Parameters.AddWithValue("@discussionId", createTaskMessage.DiscussionId);
+                messageCommand.Parameters.AddWithValue("@senderId", createTaskMessage.SenderId);
+                messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
+                messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
+                messageCommand.Parameters.AddWithValue("@taskId", taskId);
+                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+
+                var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
+                _logger.LogInformation($"Task message created with ID: {messageId}");
+
+                await transaction.CommitAsync();
+
+                return Ok(new MessageResponse
+                {
+                    Id = messageId,
+                    DiscussionId = createTaskMessage.DiscussionId,
+                    SenderId = createTaskMessage.SenderId,
+                    Content = createTaskMessage.Content,
+                    MessageType = Convert.ToByte(createTaskMessage.MessageType),
+                    TaskId = taskId,
+                    TaskTitle = taskTitle,
+                    TaskDescription = createTaskMessage.TaskDescription,
+                    TaskStatus = Enum.TryParse<crmApi.Models.TaskStatus>(createTaskMessage.TaskStatus, out var status) ? status : (crmApi.Models.TaskStatus?)null,
+                    TaskPriority = Enum.TryParse<crmApi.Models.TaskPriority>(createTaskMessage.TaskPriority, out var priority) ? priority : (crmApi.Models.TaskPriority?)null,
+                    DueDate = createTaskMessage.DueDate,
+                    EstimatedTime = createTaskMessage.EstimatedTime?.ToString(),
+                    AssignedUserIds = createTaskMessage.AssignedUserIds ?? new List<int>(),
+                    ClientIds = createTaskMessage.ClientIds ?? new List<int>(),
+                    ProjectIds = createTaskMessage.ProjectIds ?? new List<int>(),
+                    SortOrder = createTaskMessage.SortOrder ?? 0,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating task with message");
+                return StatusCode(500, new { message = "Error creating task with message", error = ex.Message });
+            }
+        }
     }
 
     public class EditMessageRequest

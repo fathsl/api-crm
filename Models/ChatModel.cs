@@ -184,6 +184,7 @@ namespace crmApi.Models
         public string FileUrl { get; set; }
         public string BucketName { get; set; }
         public string FileKey { get; set; }
+        public int SortOrder { get; set; }
         public TaskStatus? TaskStatus { get; set; }
         public TaskPriority? TaskPriority { get; set; }
         public DateTime? DueDate { get; set; }
@@ -310,6 +311,7 @@ namespace crmApi.Models
         public List<int>? ProjectIds { get; set; } = new List<int>();
         public DateTime? DueDate { get; set; }
         public int? EstimatedTime { get; set; }
+        public int? SortOrder { get; set; }
 
         public List<int>? AssignedUserIds { get; set; } = new List<int>();
     }
@@ -395,5 +397,7 @@ namespace crmApi.Models
         public int RecordedByUserId { get; set; }
         public long? FileSize { get; set; }
     }
+    
+    
 
 }
