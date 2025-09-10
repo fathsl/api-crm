@@ -2029,7 +2029,6 @@ namespace crmApi.Controllers
                     }
                 }
 
-
                 var tasks = new List<TaskWithMediaDto>();
                 if (taskIds.Any())
                 {
@@ -2229,7 +2228,8 @@ namespace crmApi.Controllers
                 taskCommand.Parameters.AddWithValue("@Status", createTaskMessage.TaskStatus);
                 taskCommand.Parameters.AddWithValue("@Priority", createTaskMessage.TaskPriority);
                 taskCommand.Parameters.AddWithValue("@DueDate", createTaskMessage.DueDate ?? (object)DBNull.Value);
-                taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
+                taskCommand.Parameters.AddWithValue("@EstimatedTime", 
+                                                    createTaskMessage.EstimatedTime?.ToString() ?? (object)DBNull.Value);
                 taskCommand.Parameters.AddWithValue("@SortOrder", createTaskMessage.SortOrder ?? 0);
                 taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
                 taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);

@@ -188,7 +188,7 @@ namespace crmApi.Models
         public TaskStatus? TaskStatus { get; set; }
         public TaskPriority? TaskPriority { get; set; }
         public DateTime? DueDate { get; set; }
-        public string EstimatedTime { get; set; }
+        public string? EstimatedTime { get; set; }
         public List<int> AssignedUserIds { get; set; }
         public List<int> ClientIds { get; set; }
         public List<int> ProjectIds { get; set; }
@@ -312,7 +312,6 @@ namespace crmApi.Models
         public DateTime? DueDate { get; set; }
         public int? EstimatedTime { get; set; }
         public int? SortOrder { get; set; }
-
         public List<int>? AssignedUserIds { get; set; } = new List<int>();
     }
 
@@ -359,7 +358,7 @@ namespace crmApi.Models
         public int Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }
-        public Models.TaskStatus Status { get; set; }
+        public TaskStatus Status { get; set; }
         public TaskPriority Priority { get; set; }
         public DateTime? DueDate { get; set; }
         public string? EstimatedTime { get; set; }
