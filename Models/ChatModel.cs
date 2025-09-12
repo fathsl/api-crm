@@ -366,6 +366,8 @@ namespace crmApi.Models
         public int CreatedByUserId { get; set; }
         public string CreatedByUserName { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
+        public List<int> ClientIds { get; set; }
+        public List<int> ProjectIds { get; set; }
         public int? UpdatedByUserId { get; set; }
         public string? UpdatedByUserName { get; set; }
         public DateTime? UpdatedAt { get; set; }
