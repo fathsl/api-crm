@@ -88,8 +88,8 @@ namespace crmApi.Models
         public string? City { get; set; }
         public string? Address { get; set; }
         public int? projectId { get; set; }
-        public List<int>? ProjectIds { get; set; }
-        public int ModifiedBy { get; set; }
+        public List<int>? projectIds { get; set; }
+        public int modifiedBy { get; set; }
     }
 
     public class ClientResponse
@@ -103,7 +103,7 @@ namespace crmApi.Models
         public string? Country { get; set; }
         public string? City { get; set; }
         public string? Address { get; set; }
-        public List<int>? ProjectIds { get; set; }
+        public List<int>? projectIds { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 

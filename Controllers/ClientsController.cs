@@ -31,42 +31,77 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                    SELECT c.Id, c.First_name, c.Last_name, c.Phone, c.Email, c.Details, 
-                        c.Country, c.City, c.Address, c.ZipCode, c.VatNumber, c.ImageUrl,
-                        c.CreatedBy, c.CreatedAt, c.ModifiedBy, c.ModifiedAt,
-                        cu.Ad AS CreatedByUserName, cu.Soyad AS CreatedByUserSurname,
-                        uu.Ad AS ModifiedByUserName, uu.Soyad AS ModifiedByUserSurname
-                    FROM Clients c
-                    LEFT JOIN KullaniciBilgileri cu ON c.CreatedBy = cu.KullaniciID
-                    LEFT JOIN KullaniciBilgileri uu ON c.ModifiedBy = uu.KullaniciID
-                    ORDER BY c.CreatedAt DESC";
+                                SELECT c.Id, c.First_name, c.Last_name, c.Phone, c.Email, c.Details, 
+                                    c.Country, c.City, c.Address, c.ZipCode, c.VatNumber, c.ImageUrl,
+                                    c.CreatedBy, c.CreatedAt, c.ModifiedBy, c.ModifiedAt,
+                                    cu.Ad AS CreatedByUserName, cu.Soyad AS CreatedByUserSurname,
+                                    uu.Ad AS ModifiedByUserName, uu.Soyad AS ModifiedByUserSurname
+                                FROM Clients c
+                                LEFT JOIN KullaniciBilgileri cu ON c.CreatedBy = cu.KullaniciID
+                                LEFT JOIN KullaniciBilgileri uu ON c.ModifiedBy = uu.KullaniciID
+                                ORDER BY c.CreatedAt DESC";
 
-                using var command = new MySqlCommand(query, connection);
-                using var reader = await command.ExecuteReaderAsync();
-
-                while (await reader.ReadAsync())
+                using (var command = new MySqlCommand(query, connection))
+                using (var reader = await command.ExecuteReaderAsync())
                 {
-                    var client = new Client
+                    while (await reader.ReadAsync())
                     {
-                        Id = reader.GetInt32("Id"),
-                        First_name = reader.GetString("First_name"),
-                        Last_name = reader.GetString("Last_name"),
-                        Phone = reader.IsDBNull("Phone") ? null : reader.GetString("Phone"),
-                        Email = reader.IsDBNull("Email") ? null : reader.GetString("Email"),
-                        Details = reader.IsDBNull("Details") ? null : reader.GetString("Details"),
-                        Country = reader.IsDBNull("Country") ? null : reader.GetString("Country"),
-                        City = reader.IsDBNull("City") ? null : reader.GetString("City"),
-                        Address = reader.IsDBNull("Address") ? null : reader.GetString("Address"),
-                        ZipCode = reader.IsDBNull("ZipCode") ? null : reader.GetString("ZipCode"),
-                        VATNumber = reader.IsDBNull("VatNumber") ? null : reader.GetString("VatNumber"),
-                        ImageUrl = reader.IsDBNull("ImageUrl") ? null : reader.GetString("ImageUrl"),
-                        CreatedBy = reader.IsDBNull("CreatedBy") ? null : reader.GetInt32("CreatedBy"),
-                        CreatedAt = reader.GetDateTime("CreatedAt"),
-                        ModifiedBy = reader.IsDBNull("ModifiedBy") ? null : reader.GetInt32("ModifiedBy"),
-                        ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt")
-                    };
+                        var client = new Client
+                        {
+                            Id = reader.GetInt32("Id"),
+                            First_name = reader.GetString("First_name"),
+                            Last_name = reader.GetString("Last_name"),
+                            Phone = reader.IsDBNull("Phone") ? null : reader.GetString("Phone"),
+                            Email = reader.IsDBNull("Email") ? null : reader.GetString("Email"),
+                            Details = reader.IsDBNull("Details") ? null : reader.GetString("Details"),
+                            Country = reader.IsDBNull("Country") ? null : reader.GetString("Country"),
+                            City = reader.IsDBNull("City") ? null : reader.GetString("City"),
+                            Address = reader.IsDBNull("Address") ? null : reader.GetString("Address"),
+                            ZipCode = reader.IsDBNull("ZipCode") ? null : reader.GetString("ZipCode"),
+                            VATNumber = reader.IsDBNull("VatNumber") ? null : reader.GetString("VatNumber"),
+                            ImageUrl = reader.IsDBNull("ImageUrl") ? null : reader.GetString("ImageUrl"),
+                            CreatedBy = reader.IsDBNull("CreatedBy") ? null : reader.GetInt32("CreatedBy"),
+                            CreatedAt = reader.GetDateTime("CreatedAt"),
+                            ModifiedBy = reader.IsDBNull("ModifiedBy") ? null : reader.GetInt32("ModifiedBy"),
+                            ProjectIds = new List<int>(),
+                            ModifiedAt = reader.IsDBNull("ModifiedAt") ? DateTime.MinValue : reader.GetDateTime("ModifiedAt")
+                        };
 
-                    clients.Add(client);
+                        clients.Add(client);
+                    }
+                }
+
+                if (clients.Any())
+                {
+                    string projectQuery = @"
+                SELECT client_id, project_id 
+                FROM ClientProjects 
+                WHERE client_id IN (" + string.Join(",", clients.Select(c => c.Id)) + ")";
+
+                    using var projectCommand = new MySqlCommand(projectQuery, connection);
+                    using var projectReader = await projectCommand.ExecuteReaderAsync();
+
+                    var clientProjectMap = new Dictionary<int, List<int>>();
+
+                    while (await projectReader.ReadAsync())
+                    {
+                        int clientId = projectReader.GetInt32("client_id");
+                        int projectId = projectReader.GetInt32("project_id");
+
+                        if (!clientProjectMap.ContainsKey(clientId))
+                        {
+                            clientProjectMap[clientId] = new List<int>();
+                        }
+                        clientProjectMap[clientId].Add(projectId);
+                    }
+
+                    foreach (var client in clients)
+                    {
+                        if (clientProjectMap.ContainsKey(client.Id))
+                        {
+                            client.ProjectIds = clientProjectMap[client.Id];
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -100,9 +135,9 @@ namespace crmApi.Controllers
                 if (await reader.ReadAsync())
                 {
                     var projectIds = new List<int>();
-                    if (!reader.IsDBNull("ProjectIds"))
+                    if (!reader.IsDBNull("projectIds"))
                     {
-                        var projectIdsStr = reader.GetString("ProjectIds");
+                        var projectIdsStr = reader.GetString("projectIds");
                         projectIds = projectIdsStr.Split(',')
                                                 .Where(x => int.TryParse(x, out _))
                                                 .Select(int.Parse)
@@ -120,7 +155,7 @@ namespace crmApi.Controllers
                         Country = reader.IsDBNull("Country") ? null : reader.GetString("Country"),
                         City = reader.IsDBNull("City") ? null : reader.GetString("City"),
                         Address = reader.IsDBNull("Address") ? null : reader.GetString("Address"),
-                        ProjectIds = projectIds,
+                        projectIds = projectIds,
                         CreatedAt = reader.GetDateTime("CreatedAt")
                     };
 
@@ -224,12 +259,12 @@ namespace crmApi.Controllers
         public async Task<ActionResult> UpdateClient(int id, [FromBody] UpdateClientDto clientDto)
         {
             using var connection = new MySqlConnection(_connectionString);
-            using var transaction = await connection.BeginTransactionAsync();
-            
+                        
             try
             {
                 await connection.OpenAsync();
-                
+                using var transaction = await connection.BeginTransactionAsync();
+
                 string query = @"
                     UPDATE Clients
                     SET First_name = @First_name,
@@ -238,8 +273,8 @@ namespace crmApi.Controllers
                         Email = @Email,
                         Details = @Details,
                         Country = @Country,
-                        ModifiedBy = @ModifiedBy,
-                        ModifiedAt = @ModifiedAt,
+                        modifiedBy = @modifiedBy,
+                        modifiedAt = @modifiedAt,
                         City = @City,
                         Address = @Address,
                         projectId = @projectId
@@ -252,12 +287,11 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Email", (object?)clientDto.Email ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Details", (object?)clientDto.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Country", (object?)clientDto.Country ?? DBNull.Value);
-                command.Parameters.AddWithValue("@ModifiedBy", clientDto.ModifiedBy);
+                command.Parameters.AddWithValue("@modifiedBy", clientDto.modifiedBy);
                 command.Parameters.AddWithValue("@ModifiedAt", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@Id", id);
                 command.Parameters.AddWithValue("@City", (object?)clientDto.City ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Address", (object?)clientDto.Address ?? DBNull.Value);
-                command.Parameters.AddWithValue("@projectId", clientDto.projectId ?? (object)DBNull.Value);
 
                 int rows = await command.ExecuteNonQueryAsync();
                 if (rows == 0)
@@ -266,23 +300,22 @@ namespace crmApi.Controllers
                     return NotFound(new { message = "Client not found" });
                 }
 
-                // Update project associations
                 string deleteProjects = "DELETE FROM ClientProjects WHERE client_id = @clientId;";
                 using var deleteCmd = new MySqlCommand(deleteProjects, connection, transaction);
                 deleteCmd.Parameters.AddWithValue("@clientId", id);
                 await deleteCmd.ExecuteNonQueryAsync();
 
-                if (clientDto.ProjectIds?.Any() == true)
+                if (clientDto.projectIds?.Any() == true)
                 {
                     string insertProjects = "INSERT INTO ClientProjects (client_id, project_id) VALUES ";
-                    var values = clientDto.ProjectIds.Select((pId, index) => $"(@clientId, @projectId{index})");
+                    var values = clientDto.projectIds.Select((pId, index) => $"(@clientId, @projectId{index})");
                     insertProjects += string.Join(", ", values);
 
                     using var insertCmd = new MySqlCommand(insertProjects, connection, transaction);
                     insertCmd.Parameters.AddWithValue("@clientId", id);
-                    for (int i = 0; i < clientDto.ProjectIds.Count; i++)
+                    for (int i = 0; i < clientDto.projectIds.Count; i++)
                     {
-                        insertCmd.Parameters.AddWithValue($"@projectId{i}", clientDto.ProjectIds[i]);
+                        insertCmd.Parameters.AddWithValue($"@projectId{i}", clientDto.projectIds[i]);
                     }
                     await insertCmd.ExecuteNonQueryAsync();
                 }
@@ -292,7 +325,6 @@ namespace crmApi.Controllers
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
                 return StatusCode(500, new { message = "Error updating client", error = ex.Message });
             }
         }
