@@ -35,15 +35,39 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"
-                    SELECT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt
-                    FROM Discussions d
-                    INNER JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
-                    WHERE dp.UserId = @userId
-                    ORDER BY d.CreatedAt DESC";
+                string roleQuery = "SELECT YetkiTuru FROM KullaniciBilgileri WHERE KullaniciID = @userId";
+                string userRole = "";
+
+                using var roleCommand = new MySqlCommand(roleQuery, connection);
+                roleCommand.Parameters.AddWithValue("@userId", userId);
+                var roleResult = await roleCommand.ExecuteScalarAsync();
+                userRole = roleResult?.ToString() ?? "";
+
+                string query = "";
+
+                if (userRole.ToLower() == "yonetici")
+                {
+                    query = @"
+                SELECT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt
+                FROM Discussions d
+                ORDER BY d.CreatedAt DESC";
+                }
+                else
+                {
+                    query = @"
+                SELECT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt
+                FROM Discussions d
+                INNER JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                WHERE dp.UserId = @userId
+                ORDER BY d.CreatedAt DESC";
+                }
 
                 using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@userId", userId);
+
+                if (userRole.ToLower() != "yonetici")
+                {
+                    command.Parameters.AddWithValue("@userId", userId);
+                }
 
                 using var reader = await command.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
