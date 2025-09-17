@@ -1,4 +1,4 @@
-@crmApi_HostAddress = http://localhost:5178
+@crmApi_HostAddress = https://api-crm-seven.vercel.app/
 
 GET {{crmApi_HostAddress}}/weatherforecast/
 Accept: application/json
