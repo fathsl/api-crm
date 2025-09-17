@@ -1,4 +1,4 @@
-@crmApi_HostAddress = https://api-crm-seven.vercel.app/
+@crmApi_HostAddress = https://api-crm-tegd.onrender.com/
 
 GET {{crmApi_HostAddress}}/weatherforecast/
 Accept: application/json
