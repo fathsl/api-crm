@@ -31,4 +31,4 @@ ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
 EXPOSE ${PORT:-8080}
 
 # Start the app
-ENTRYPOINT ["dotnet", "api-crm.dll"]
+ENTRYPOINT ["dotnet", "crmApi.dll"]
