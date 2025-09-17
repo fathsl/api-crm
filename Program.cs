@@ -19,7 +19,8 @@ builder.Services.AddCors(options =>
             "https://unixpadel-crm-eight.vercel.app"
         )
         .AllowAnyHeader()
-        .AllowAnyMethod();
+        .AllowAnyMethod()
+        .AllowCredentials();
     });
 });
 
