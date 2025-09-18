@@ -155,6 +155,8 @@ namespace crmApi.Models
         public string Title { get; set; }
         public string Description { get; set; }
         public int CreatedByUserId { get; set; }
+        public int SenderId { get; set; }
+        public int ReceiverId { get; set; }
         public List<int> ParticipantUserIds { get; set; } = new List<int>();
     }
 
@@ -208,6 +210,12 @@ namespace crmApi.Models
         public DateTime CreatedAt { get; set; }
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
+        public int SenderId { get; set; }
+        public string SenderName { get; set; }
+        public int ReceiverId { get; set; }
+        public string ReceiverName { get; set; }
+        public string CreatorName { get; set; }
+
         public TaskStatus? LastTaskStatus { get; set; }
     }
 
