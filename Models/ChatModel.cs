@@ -208,6 +208,7 @@ namespace crmApi.Models
         public DateTime CreatedAt { get; set; }
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
+        public TaskStatus? LastTaskStatus { get; set; }
     }
 
     public class TaskMessageResponse : MessageResponse

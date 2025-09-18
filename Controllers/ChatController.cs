@@ -35,35 +35,68 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
+                // Get user role
                 string roleQuery = "SELECT YetkiTuru FROM KullaniciBilgileri WHERE KullaniciID = @userId";
                 string userRole = "";
-
                 using var roleCommand = new MySqlCommand(roleQuery, connection);
                 roleCommand.Parameters.AddWithValue("@userId", userId);
                 var roleResult = await roleCommand.ExecuteScalarAsync();
                 userRole = roleResult?.ToString() ?? "";
 
                 string query = "";
-
                 if (userRole.ToLower() == "yonetici")
                 {
+                    // Admin sees all discussions with last task status
                     query = @"
-                SELECT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
+                       lt.Status as LastTaskStatus
                 FROM Discussions d
+                LEFT JOIN (
+                    SELECT cm1.DiscussionId, t1.Status
+                    FROM ChatMessages cm1
+                    INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
+                    WHERE cm1.TaskId IS NOT NULL
+                    AND cm1.Id = (
+                        SELECT cm2.Id 
+                        FROM ChatMessages cm2 
+                        WHERE cm2.DiscussionId = cm1.DiscussionId 
+                        AND cm2.TaskId IS NOT NULL
+                        ORDER BY cm2.CreatedAt DESC 
+                        LIMIT 1
+                    )
+                ) lt ON d.Id = lt.DiscussionId
                 ORDER BY d.CreatedAt DESC";
                 }
                 else
                 {
+                    // Regular users see only their discussions (where they are sender or receiver)
                     query = @"
-                SELECT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
+                       lt.Status as LastTaskStatus
                 FROM Discussions d
                 INNER JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
-                WHERE dp.UserId = @userId
+                LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
+                LEFT JOIN (
+                    SELECT cm1.DiscussionId, t1.Status
+                    FROM ChatMessages cm1
+                    INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
+                    WHERE cm1.TaskId IS NOT NULL
+                    AND cm1.Id = (
+                        SELECT cm2.Id 
+                        FROM ChatMessages cm2 
+                        WHERE cm2.DiscussionId = cm1.DiscussionId 
+                        AND cm2.TaskId IS NOT NULL
+                        ORDER BY cm2.CreatedAt DESC 
+                        LIMIT 1
+                    )
+                ) lt ON d.Id = lt.DiscussionId
+                WHERE dp.UserId = @userId 
+                   OR cm.SenderId = @userId 
+                   OR cm.ReceiverId = @userId
                 ORDER BY d.CreatedAt DESC";
                 }
 
                 using var command = new MySqlCommand(query, connection);
-
                 if (userRole.ToLower() != "yonetici")
                 {
                     command.Parameters.AddWithValue("@userId", userId);
@@ -72,19 +105,29 @@ namespace crmApi.Controllers
                 using var reader = await command.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
+                    crmApi.Models.TaskStatus? lastTaskStatus = null;
+                    if (reader["LastTaskStatus"] != DBNull.Value)
+                    {
+                        if (Enum.TryParse<crmApi.Models.TaskStatus>(reader["LastTaskStatus"].ToString(), out crmApi.Models.TaskStatus status))
+                        {
+                            lastTaskStatus = status;
+                        }
+                    }
+
                     discussions.Add(new DiscussionResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
                         Title = reader["Title"].ToString() ?? "",
                         Description = reader["Description"].ToString() ?? "",
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
-                        CreatedAt = Convert.ToDateTime(reader["CreatedAt"])
+                        CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                        LastTaskStatus = lastTaskStatus
                     });
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching discussions");
+                _logger.LogError(ex, "Error fetching discussions for user {UserId}", userId);
                 return StatusCode(500, new { message = "Error fetching discussions", error = ex.Message });
             }
 
