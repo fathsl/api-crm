@@ -42,7 +42,7 @@ namespace crmApi.Controllers
                 string userRole = roleResult?.ToString() ?? "";
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -69,8 +69,8 @@ namespace crmApi.Controllers
                     )
                 ) lt ON d.Id = lt.DiscussionId
                 WHERE d.CreatedByUserId = @userId 
-                   OR COALESCE(d.SenderId, cm.SenderId) = @userId 
-                   OR COALESCE(d.ReceiverId, cm.ReceiverId) = @userId
+                OR COALESCE(d.SenderId, cm.SenderId) = @userId 
+                OR COALESCE(d.ReceiverId, cm.ReceiverId) = @userId
                 ORDER BY d.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
@@ -88,6 +88,12 @@ namespace crmApi.Controllers
                         }
                     }
 
+                    byte discussionStatus = 0;
+                    if (reader["Status"] != DBNull.Value)
+                    {
+                        discussionStatus = Convert.ToByte(reader["Status"]);
+                    }
+
                     discussions.Add(new DiscussionResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
@@ -100,6 +106,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        Status = discussionStatus,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -123,13 +130,13 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
-                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                    lt.Status as LastTaskStatus,
-                    sender.KullaniciAdi as SenderName, 
-                    receiver.KullaniciAdi as ReceiverName,
-                    creator.KullaniciAdi as CreatorName
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                lt.Status as LastTaskStatus,
+                sender.KullaniciAdi as SenderName, 
+                receiver.KullaniciAdi as ReceiverName,
+                creator.KullaniciAdi as CreatorName
                 FROM Discussions d
                 LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
                 LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
@@ -171,11 +178,18 @@ namespace crmApi.Controllers
                         }
                     }
 
+                    byte discussionStatus = 0;
+                    if (reader["Status"] != DBNull.Value)
+                    {
+                        discussionStatus = Convert.ToByte(reader["Status"]);
+                    }
+
                     discussions.Add(new DiscussionResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
                         Title = reader["Title"].ToString() ?? "",
                         Description = reader["Description"].ToString() ?? "",
+                        Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
@@ -220,13 +234,13 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
-                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                    lt.Status as LastTaskStatus,
-                    sender.KullaniciAdi as SenderName, 
-                    receiver.KullaniciAdi as ReceiverName,
-                    creator.KullaniciAdi as CreatorName
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                lt.Status as LastTaskStatus,
+                sender.KullaniciAdi as SenderName, 
+                receiver.KullaniciAdi as ReceiverName,
+                creator.KullaniciAdi as CreatorName
                 FROM Discussions d
                 LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
                 LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
@@ -247,8 +261,8 @@ namespace crmApi.Controllers
                     )
                 ) lt ON d.Id = lt.DiscussionId
                 WHERE d.CreatedByUserId = @selectedUserId 
-                   OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId 
-                   OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId
+                OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId 
+                OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId
                 ORDER BY d.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
@@ -266,11 +280,18 @@ namespace crmApi.Controllers
                         }
                     }
 
+                    byte discussionStatus = 0;
+                    if (reader["Status"] != DBNull.Value)
+                    {
+                        discussionStatus = Convert.ToByte(reader["Status"]);
+                    }
+
                     discussions.Add(new DiscussionResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
                         Title = reader["Title"].ToString() ?? "",
                         Description = reader["Description"].ToString() ?? "",
+                        Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
@@ -301,13 +322,13 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.CreatedByUserId, d.CreatedAt,
-                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                    lt.Status as LastTaskStatus,
-                    sender.KullaniciAdi as SenderName, 
-                    receiver.KullaniciAdi as ReceiverName,
-                    creator.KullaniciAdi as CreatorName
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                lt.Status as LastTaskStatus,
+                sender.KullaniciAdi as SenderName, 
+                receiver.KullaniciAdi as ReceiverName,
+                creator.KullaniciAdi as CreatorName
                 FROM Discussions d
                 LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
                 LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
@@ -343,11 +364,18 @@ namespace crmApi.Controllers
                         }
                     }
 
+                    byte discussionStatus = 0;
+                    if (reader["Status"] != DBNull.Value)
+                    {
+                        discussionStatus = Convert.ToByte(reader["Status"]);
+                    }
+
                     discussions.Add(new DiscussionResponse
                     {
                         Id = Convert.ToInt32(reader["Id"]),
                         Title = reader["Title"].ToString() ?? "",
                         Description = reader["Description"].ToString() ?? "",
+                        Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
@@ -468,28 +496,28 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"INSERT INTO Discussions (Title, Description, CreatedByUserId, SenderId, ReceiverId, CreatedAt)
-                         VALUES (@title, @description, @createdByUserId, @senderId, @receiverId, @createdAt);
-                         SELECT LAST_INSERT_ID();";
+                string query = @"INSERT INTO Discussions (Title, Description, Status, CreatedByUserId, SenderId, ReceiverId, CreatedAt)
+                 VALUES (@title, @description, @status, @createdByUserId, @senderId, @receiverId, @createdAt);
+                 SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@title", request.Title);
                 command.Parameters.AddWithValue("@description", request.Description ?? "");
+                command.Parameters.AddWithValue("@status", request.Status);
                 command.Parameters.AddWithValue("@createdByUserId", request.CreatedByUserId);
                 command.Parameters.AddWithValue("@senderId", request.SenderId);
                 command.Parameters.AddWithValue("@receiverId", request.ReceiverId);
                 command.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
-                _logger.LogInformation($"Creating discussion with Title: {request.Title}, SenderId: {request.SenderId}, ReceiverId: {request.ReceiverId}");
+                _logger.LogInformation($"Creating discussion with Title: {request.Title}, Status: {request.Status}, SenderId: {request.SenderId}, ReceiverId: {request.ReceiverId}");
 
                 var discussionId = Convert.ToInt32(await command.ExecuteScalarAsync());
 
                 var participantUserIds = new List<int> { request.SenderId, request.ReceiverId };
-
                 foreach (var userId in participantUserIds)
                 {
                     string participantQuery = @"INSERT INTO DiscussionParticipants (DiscussionId, UserId, Role, JoinedAt, JoinedByUserId)
-                                        VALUES (@discussionId, @userId, 0, @joinedAt, @createdByUserId)";
+                                VALUES (@discussionId, @userId, 0, @joinedAt, @createdByUserId)";
                     using var participantCommand = new MySqlCommand(participantQuery, connection);
                     participantCommand.Parameters.AddWithValue("@discussionId", discussionId);
                     participantCommand.Parameters.AddWithValue("@userId", userId);
@@ -503,6 +531,7 @@ namespace crmApi.Controllers
                     Id = discussionId,
                     Title = request.Title,
                     Description = request.Description ?? "",
+                    Status = request.Status,
                     CreatedByUserId = request.CreatedByUserId,
                     SenderId = request.SenderId,
                     ReceiverId = request.ReceiverId,
@@ -513,6 +542,42 @@ namespace crmApi.Controllers
             {
                 _logger.LogError(ex, "Error creating discussion");
                 return StatusCode(500, new { message = "Error creating discussion", error = ex.Message });
+            }
+        }
+
+        [HttpPut("discussions/{discussionId}/status")]
+        public async Task<IActionResult> UpdateDiscussionStatus(int discussionId, [FromBody] UpdateDiscussionStatusRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"UPDATE Discussions 
+                        SET Status = @status, UpdatedByUserId = @updatedByUserId, UpdatedAt = @updatedAt
+                        WHERE Id = @discussionId";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@status", request.Status);
+                command.Parameters.AddWithValue("@updatedByUserId", request.UpdatedByUserId);
+                command.Parameters.AddWithValue("@updatedAt", DateTime.Now);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                if (rowsAffected == 0)
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                _logger.LogInformation($"Updated discussion {discussionId} status to {request.Status}");
+
+                return Ok(new { message = "Discussion status updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating discussion status");
+                return StatusCode(500, new { message = "Error updating discussion status", error = ex.Message });
             }
         }
 

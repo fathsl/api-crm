@@ -157,8 +157,16 @@ namespace crmApi.Models
         public int CreatedByUserId { get; set; }
         public int SenderId { get; set; }
         public int ReceiverId { get; set; }
+        public byte Status { get; set; }
         public List<int> ParticipantUserIds { get; set; } = new List<int>();
     }
+
+    public class UpdateDiscussionStatusRequest
+    {
+        public byte Status { get; set; }
+        public int UpdatedByUserId { get; set; }
+    }
+
 
     public class MessageResponse
     {
@@ -215,6 +223,7 @@ namespace crmApi.Models
         public int ReceiverId { get; set; }
         public string ReceiverName { get; set; }
         public string CreatorName { get; set; }
+        
 
         public TaskStatus? LastTaskStatus { get; set; }
     }
