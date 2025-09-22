@@ -228,6 +228,13 @@ namespace crmApi.Models
         public TaskStatus? LastTaskStatus { get; set; }
     }
 
+    public class AssignDiscussionRequest
+    {
+        public int DiscussionId { get; set; }
+        public List<int> UserIds { get; set; } = new List<int>();
+        public int AssignedByUserId { get; set; }
+    }
+
     public class TaskMessageResponse : MessageResponse
     {
         public int? TaskId { get; set; }

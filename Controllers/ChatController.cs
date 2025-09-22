@@ -42,36 +42,40 @@ namespace crmApi.Controllers
                 string userRole = roleResult?.ToString() ?? "";
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
-                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                    lt.Status as LastTaskStatus,
-                    sender.KullaniciAdi as SenderName, 
-                    receiver.KullaniciAdi as ReceiverName,
-                    creator.KullaniciAdi as CreatorName
-                FROM Discussions d
-                LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
-                LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
-                LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
-                LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
-                LEFT JOIN (
-                    SELECT cm1.DiscussionId, t1.Status
-                    FROM ChatMessages cm1
-                    INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
-                    WHERE cm1.TaskId IS NOT NULL
-                    AND cm1.Id = (
-                        SELECT cm2.Id 
-                        FROM ChatMessages cm2 
-                        WHERE cm2.DiscussionId = cm1.DiscussionId 
-                        AND cm2.TaskId IS NOT NULL
-                        ORDER BY cm2.CreatedAt DESC 
-                        LIMIT 1
-                    )
-                ) lt ON d.Id = lt.DiscussionId
-                WHERE d.CreatedByUserId = @userId 
-                OR COALESCE(d.SenderId, cm.SenderId) = @userId 
-                OR COALESCE(d.ReceiverId, cm.ReceiverId) = @userId
-                ORDER BY d.CreatedAt DESC";
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                        COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                        COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                        lt.Status as LastTaskStatus,
+                        sender.KullaniciAdi as SenderName, 
+                        receiver.KullaniciAdi as ReceiverName,
+                        creator.KullaniciAdi as CreatorName
+                    FROM Discussions d
+                    LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
+                    LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
+                    LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
+                    LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
+                    LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
+                    LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                    LEFT JOIN (
+                        SELECT cm1.DiscussionId, t1.Status
+                        FROM ChatMessages cm1
+                        INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
+                        WHERE cm1.TaskId IS NOT NULL
+                        AND cm1.Id = (
+                            SELECT cm2.Id 
+                            FROM ChatMessages cm2 
+                            WHERE cm2.DiscussionId = cm1.DiscussionId 
+                            AND cm2.TaskId IS NOT NULL
+                            ORDER BY cm2.CreatedAt DESC 
+                            LIMIT 1
+                        )
+                    ) lt ON d.Id = lt.DiscussionId
+                    WHERE d.CreatedByUserId = @userId 
+                    OR COALESCE(d.SenderId, cm.SenderId) = @userId 
+                    OR COALESCE(d.ReceiverId, cm.ReceiverId) = @userId
+                    OR dau.AssignedUserId = @userId
+                    OR dp.UserId = @userId
+                    ORDER BY d.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@userId", userId);
@@ -121,27 +125,41 @@ namespace crmApi.Controllers
         }
 
         [HttpGet("discussions/{currentUserId}/{selectedUserId}")]
-        public async Task<ActionResult<List<DiscussionResponse>>> GetUserToUserDiscussions(int currentUserId, int selectedUserId)
+        public async Task<ActionResult<List<DiscussionResponse>>> GetUserDiscussions(int currentUserId, int selectedUserId)
         {
-            var discussions = new List<DiscussionResponse>();
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
+                string roleQuery = "SELECT YetkiTuru FROM KullaniciBilgileri WHERE KullaniciID = @currentUserId";
+                using var roleCommand = new MySqlCommand(roleQuery, connection);
+                roleCommand.Parameters.AddWithValue("@currentUserId", currentUserId);
+                var roleResult = await roleCommand.ExecuteScalarAsync();
+                string userRole = roleResult?.ToString() ?? "";
+
+                if (userRole == "Yonetici")
+                {
+                    return await GetAdminUserDiscussions(currentUserId, selectedUserId);
+                }
+
+                var discussions = new List<DiscussionResponse>();
+
                 string query = @"
                 SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
-                COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                lt.Status as LastTaskStatus,
-                sender.KullaniciAdi as SenderName, 
-                receiver.KullaniciAdi as ReceiverName,
-                creator.KullaniciAdi as CreatorName
+                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                    lt.Status as LastTaskStatus,
+                    sender.KullaniciAdi as SenderName, 
+                    receiver.KullaniciAdi as ReceiverName,
+                    creator.KullaniciAdi as CreatorName
                 FROM Discussions d
                 LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
                 LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
                 LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
                 LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
+                LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
+                LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
                 LEFT JOIN (
                     SELECT cm1.DiscussionId, t1.Status
                     FROM ChatMessages cm1
@@ -156,10 +174,20 @@ namespace crmApi.Controllers
                         LIMIT 1
                     )
                 ) lt ON d.Id = lt.DiscussionId
-                WHERE 
-                (d.CreatedByUserId = @currentUserId OR COALESCE(d.SenderId, cm.SenderId) = @currentUserId OR COALESCE(d.ReceiverId, cm.ReceiverId) = @currentUserId)
-                AND 
-                (d.CreatedByUserId = @selectedUserId OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId)
+                WHERE (
+                    d.CreatedByUserId = @currentUserId 
+                    OR COALESCE(d.SenderId, cm.SenderId) = @currentUserId 
+                    OR COALESCE(d.ReceiverId, cm.ReceiverId) = @currentUserId
+                    OR dp.UserId = @currentUserId
+                    OR dau.AssignedByUserId = @currentUserId
+                )
+                AND (
+                    d.CreatedByUserId = @selectedUserId 
+                    OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId 
+                    OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId
+                    OR dp.UserId = @selectedUserId
+                    OR dau.AssignedUserId = @selectedUserId
+                )
                 ORDER BY d.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
@@ -200,14 +228,14 @@ namespace crmApi.Controllers
                         LastTaskStatus = lastTaskStatus
                     });
                 }
+
+                return Ok(discussions);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching discussions between users {CurrentUserId} and {SelectedUserId}", currentUserId, selectedUserId);
+                _logger.LogError(ex, "Error fetching discussions for user {CurrentUserId} and selected user {SelectedUserId}", currentUserId, selectedUserId);
                 return StatusCode(500, new { message = "Error fetching discussions", error = ex.Message });
             }
-
-            return Ok(discussions);
         }
 
 
@@ -219,7 +247,6 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                // Verify current user is admin
                 string roleQuery = "SELECT YetkiTuru FROM KullaniciBilgileri WHERE KullaniciID = @currentUserId";
                 using var roleCommand = new MySqlCommand(roleQuery, connection);
                 roleCommand.Parameters.AddWithValue("@currentUserId", currentUserId);
@@ -234,36 +261,40 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
-                COALESCE(d.SenderId, cm.SenderId) as SenderId, 
-                COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
-                lt.Status as LastTaskStatus,
-                sender.KullaniciAdi as SenderName, 
-                receiver.KullaniciAdi as ReceiverName,
-                creator.KullaniciAdi as CreatorName
-                FROM Discussions d
-                LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
-                LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
-                LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
-                LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
-                LEFT JOIN (
-                    SELECT cm1.DiscussionId, t1.Status
-                    FROM ChatMessages cm1
-                    INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
-                    WHERE cm1.TaskId IS NOT NULL
-                    AND cm1.Id = (
-                        SELECT cm2.Id 
-                        FROM ChatMessages cm2 
-                        WHERE cm2.DiscussionId = cm1.DiscussionId 
-                        AND cm2.TaskId IS NOT NULL
-                        ORDER BY cm2.CreatedAt DESC 
-                        LIMIT 1
-                    )
-                ) lt ON d.Id = lt.DiscussionId
-                WHERE d.CreatedByUserId = @selectedUserId 
-                OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId 
-                OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId
-                ORDER BY d.CreatedAt DESC";
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                    COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                    COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
+                    lt.Status as LastTaskStatus,
+                    sender.KullaniciAdi as SenderName, 
+                    receiver.KullaniciAdi as ReceiverName,
+                    creator.KullaniciAdi as CreatorName
+                    FROM Discussions d
+                    LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
+                    LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
+                    LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
+                    LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
+                    LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
+                    LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                    LEFT JOIN (
+                        SELECT cm1.DiscussionId, t1.Status
+                        FROM ChatMessages cm1
+                        INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
+                        WHERE cm1.TaskId IS NOT NULL
+                        AND cm1.Id = (
+                            SELECT cm2.Id 
+                            FROM ChatMessages cm2 
+                            WHERE cm2.DiscussionId = cm1.DiscussionId 
+                            AND cm2.TaskId IS NOT NULL
+                            ORDER BY cm2.CreatedAt DESC 
+                            LIMIT 1
+                        )
+                    ) lt ON d.Id = lt.DiscussionId
+                    WHERE d.CreatedByUserId = @selectedUserId 
+                    OR COALESCE(d.SenderId, cm.SenderId) = @selectedUserId 
+                    OR COALESCE(d.ReceiverId, cm.ReceiverId) = @selectedUserId
+                    OR dau.AssignedUserId = @selectedUserId
+                    OR dp.UserId = @selectedUserId
+                    ORDER BY d.CreatedAt DESC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@selectedUserId", selectedUserId);
@@ -398,28 +429,99 @@ namespace crmApi.Controllers
 
         // ✅ Get messages for a discussion
         [HttpGet("discussions/{discussionId}/messages")]
-        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId)
+        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int? userId = null)
         {
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"
-                    SELECT 
-                        m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
-                        m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
-                        m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
-                        t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
-                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize,d.IDriveUrl,d.BucketName,d.FileKey
-                    FROM ChatMessages m
-                    LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
-                    LEFT JOIN Tasks t ON m.TaskId = t.Id
-                    WHERE m.DiscussionId = @discussionId
-                    ORDER BY m.CreatedAt ASC";
+                DateTime? userAssignmentTime = null;
+                bool isDiscussionCreator = false;
+
+                if (userId.HasValue)
+                {
+                    string creatorQuery = @"
+            SELECT CreatedByUserId FROM Discussions 
+            WHERE Id = @discussionId";
+
+                    using var creatorCommand = new MySqlCommand(creatorQuery, connection);
+                    creatorCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                    var creatorResult = await creatorCommand.ExecuteScalarAsync();
+                    if (creatorResult != null && creatorResult != DBNull.Value)
+                    {
+                        int creatorId = Convert.ToInt32(creatorResult);
+                        isDiscussionCreator = (userId.Value == creatorId);
+                        _logger.LogInformation("User {UserId} is creator: {IsCreator} for discussion {DiscussionId}",
+                            userId.Value, isDiscussionCreator, discussionId);
+                    }
+
+                    if (!isDiscussionCreator)
+                    {
+                        string assignmentQuery = @"
+                SELECT AssignedAt FROM DiscussionAssignedUsers 
+                WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+
+                        using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
+                        assignmentCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                        assignmentCommand.Parameters.AddWithValue("@userId", userId.Value);
+
+                        var assignmentResult = await assignmentCommand.ExecuteScalarAsync();
+                        if (assignmentResult != null && assignmentResult != DBNull.Value)
+                        {
+                            userAssignmentTime = Convert.ToDateTime(assignmentResult);
+                            _logger.LogInformation("User {UserId} assigned to discussion {DiscussionId} at {AssignmentTime}",
+                                userId.Value, discussionId, userAssignmentTime);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("User {UserId} is NOT assigned to discussion {DiscussionId}",
+                                userId.Value, discussionId);
+                        }
+                    }
+                }
+
+                string whereClause = "WHERE m.DiscussionId = @discussionId";
+                string taskWhereClause = "";
+
+                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
+                {
+                    whereClause += " AND m.CreatedAt >= @assignmentTime";
+                    // Add task creation time filter - this was missing in the original code
+                    taskWhereClause = " AND (t.Id IS NULL OR t.CreatedAt >= @assignmentTime)";
+                    _logger.LogInformation("Applying message and task filter: CreatedAt >= {AssignmentTime}", userAssignmentTime);
+                }
+                else if (userId.HasValue && !isDiscussionCreator && !userAssignmentTime.HasValue)
+                {
+                    _logger.LogInformation("User {UserId} is not creator and not assigned to discussion {DiscussionId}, returning empty message list",
+                        userId.Value, discussionId);
+                    return Ok(new List<MessageResponse>());
+                }
+
+                string query = $@"
+            SELECT 
+                m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
+                m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
+                m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
+                t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime, t.CreatedAt AS TaskCreatedAt,
+                d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey,
+                u1.Ad AS SenderName, u2.Ad AS ReceiverName
+            FROM ChatMessages m
+            LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
+            LEFT JOIN Tasks t ON m.TaskId = t.Id{taskWhereClause}
+            LEFT JOIN KullaniciBilgileri u1 ON m.SenderId = u1.KullaniciID
+            LEFT JOIN KullaniciBilgileri u2 ON m.ReceiverId = u2.KullaniciID
+            {whereClause}
+            ORDER BY m.CreatedAt ASC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
+
+                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
+                {
+                    command.Parameters.AddWithValue("@assignmentTime", userAssignmentTime.Value);
+                }
 
                 var messages = new List<MessageResponse>();
                 using var reader = await command.ExecuteReaderAsync();
@@ -429,6 +531,13 @@ namespace crmApi.Controllers
                     var fileReference = reader.IsDBNull(reader.GetOrdinal("FileReference")) ? null : reader["FileReference"].ToString();
                     var duration = reader.IsDBNull(reader.GetOrdinal("Duration")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("Duration"));
                     var taskId = reader.IsDBNull(reader.GetOrdinal("TaskId")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("TaskId"));
+
+                    if (Convert.ToByte(reader["MessageType"]) == 3 && taskId.HasValue && reader.IsDBNull(reader.GetOrdinal("TaskTitle")))
+                    {
+                        _logger.LogInformation("Skipping task message {MessageId} because task {TaskId} was created before user assignment",
+                            reader["Id"], taskId);
+                        continue;
+                    }
 
                     var message = new MessageResponse
                     {
@@ -454,9 +563,11 @@ namespace crmApi.Controllers
                         DueDate = reader.IsDBNull(reader.GetOrdinal("DueDate")) ? null : reader.GetDateTime(reader.GetOrdinal("DueDate")),
                         EstimatedTime = reader.IsDBNull(reader.GetOrdinal("EstimatedTime")) ? null : reader["EstimatedTime"].ToString(),
                         AssignedUserIds = new List<int>(),
-                        IDriveUrl = reader["IdriveUrl"]?.ToString(),
+                        IDriveUrl = reader["IDriveUrl"]?.ToString(),
                         BucketName = reader["BucketName"]?.ToString(),
-                        FileKey = reader["FileKey"]?.ToString()
+                        FileKey = reader["FileKey"]?.ToString(),
+                        SenderName = reader.IsDBNull(reader.GetOrdinal("SenderName")) ? null : reader["SenderName"].ToString(),
+                        ReceiverName = reader.IsDBNull(reader.GetOrdinal("ReceiverName")) ? null : reader["ReceiverName"].ToString()
                     };
 
                     messages.Add(message);
@@ -464,20 +575,27 @@ namespace crmApi.Controllers
 
                 reader.Close();
 
-                foreach (var message in messages.Where(m => m.TaskId.HasValue))
+                _logger.LogInformation("Found {MessageCount} messages for discussion {DiscussionId}, user {UserId}",
+                    messages.Count, discussionId, userId);
+
+                var taskMessages = messages.Where(m => m.MessageType == 3 && m.TaskId.HasValue).ToList();
+                _logger.LogInformation("Found {TaskMessageCount} task messages", taskMessages.Count);
+
+                foreach (var message in taskMessages)
                 {
                     string assignQuery = @"
-                        SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
+            SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
+
                     using var assignCommand = new MySqlCommand(assignQuery, connection);
                     assignCommand.Parameters.AddWithValue("@taskId", message.TaskId);
+
                     using var assignReader = await assignCommand.ExecuteReaderAsync();
                     while (await assignReader.ReadAsync())
                     {
                         message.AssignedUserIds.Add(assignReader.GetInt32(assignReader.GetOrdinal("UserId")));
                     }
+                    assignReader.Close();
                 }
-
-                var voiceMessages = messages.Where(m => m.MessageType == (byte)MessageType.Voice).ToList();
 
                 return Ok(messages);
             }
@@ -581,6 +699,187 @@ namespace crmApi.Controllers
             }
         }
 
+        [HttpPost("discussions/assign")]
+        public async Task<ActionResult> AssignUsersToDiscussion([FromBody] AssignDiscussionRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string discussionExistsQuery = "SELECT COUNT(*) FROM Discussions WHERE Id = @discussionId";
+                using var existsCommand = new MySqlCommand(discussionExistsQuery, connection);
+                existsCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                var discussionExists = Convert.ToInt32(await existsCommand.ExecuteScalarAsync()) > 0;
+
+                if (!discussionExists)
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                string permissionQuery = @"
+            SELECT d.CreatedByUserId, kb.YetkiTuru 
+            FROM Discussions d 
+            LEFT JOIN KullaniciBilgileri kb ON kb.KullaniciID = @assignedByUserId 
+            WHERE d.Id = @discussionId";
+
+                using var permissionCommand = new MySqlCommand(permissionQuery, connection);
+                permissionCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                permissionCommand.Parameters.AddWithValue("@assignedByUserId", request.AssignedByUserId);
+
+                using var permissionReader = await permissionCommand.ExecuteReaderAsync();
+                bool hasPermission = false;
+
+                if (await permissionReader.ReadAsync())
+                {
+                    var creatorId = Convert.ToInt32(permissionReader["CreatedByUserId"]);
+                    var userRole = permissionReader["YetkiTuru"]?.ToString() ?? "";
+                    hasPermission = creatorId == request.AssignedByUserId || userRole == "Yonetici";
+                }
+                permissionReader.Close();
+
+                if (!hasPermission)
+                {
+                    return Forbid("You don't have permission to assign users to this discussion");
+                }
+
+                var assignedUsers = new List<int>();
+                var alreadyAssigned = new List<int>();
+
+                foreach (var userId in request.UserIds)
+                {
+                    string checkAssignedQuery = @"
+                SELECT COUNT(*) FROM DiscussionAssignedUsers 
+                WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+
+                    using var checkAssignedCommand = new MySqlCommand(checkAssignedQuery, connection);
+                    checkAssignedCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    checkAssignedCommand.Parameters.AddWithValue("@userId", userId);
+
+                    var isAlreadyAssigned = Convert.ToInt32(await checkAssignedCommand.ExecuteScalarAsync()) > 0;
+
+                    if (isAlreadyAssigned)
+                    {
+                        alreadyAssigned.Add(userId);
+                        continue;
+                    }
+
+                    string checkParticipantQuery = @"
+                SELECT COUNT(*) FROM DiscussionParticipants 
+                WHERE DiscussionId = @discussionId AND UserId = @userId";
+
+                    using var checkCommand = new MySqlCommand(checkParticipantQuery, connection);
+                    checkCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    checkCommand.Parameters.AddWithValue("@userId", userId);
+
+                    var isAlreadyParticipant = Convert.ToInt32(await checkCommand.ExecuteScalarAsync()) > 0;
+
+                    if (!isAlreadyParticipant)
+                    {
+                        string insertParticipantQuery = @"
+                    INSERT INTO DiscussionParticipants (DiscussionId, UserId, Role, JoinedAt, JoinedByUserId)
+                    VALUES (@discussionId, @userId, 0, @joinedAt, @assignedByUserId)";
+
+                        using var insertCommand = new MySqlCommand(insertParticipantQuery, connection);
+                        insertCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                        insertCommand.Parameters.AddWithValue("@userId", userId);
+                        insertCommand.Parameters.AddWithValue("@joinedAt", DateTime.Now);
+                        insertCommand.Parameters.AddWithValue("@assignedByUserId", request.AssignedByUserId);
+
+                        await insertCommand.ExecuteNonQueryAsync();
+                    }
+
+                    string systemMessageQuery = @"
+                INSERT INTO ChatMessages (DiscussionId, SenderId, Content, MessageType, CreatedAt)
+                VALUES (@discussionId, @assignedByUserId, @content, @messageType, @createdAt)";
+
+                    using var messageCommand = new MySqlCommand(systemMessageQuery, connection);
+                    messageCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    messageCommand.Parameters.AddWithValue("@assignedByUserId", request.AssignedByUserId);
+                    messageCommand.Parameters.AddWithValue("@content", $"User has been assigned to this discussion");
+                    messageCommand.Parameters.AddWithValue("@messageType", 1);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
+
+                    await messageCommand.ExecuteNonQueryAsync();
+
+                    string assignedUsersQuery = @"
+                INSERT INTO DiscussionAssignedUsers (DiscussionId, AssignedUserId, AssignedByUserId, AssignedAt)
+                VALUES (@discussionId, @assignedUserId, @assignedByUserId, @assignedAt)";
+
+                    using var assignedCommand = new MySqlCommand(assignedUsersQuery, connection);
+                    assignedCommand.Parameters.AddWithValue("@discussionId", request.DiscussionId);
+                    assignedCommand.Parameters.AddWithValue("@assignedUserId", userId);
+                    assignedCommand.Parameters.AddWithValue("@assignedByUserId", request.AssignedByUserId);
+                    assignedCommand.Parameters.AddWithValue("@assignedAt", DateTime.Now);
+
+                    await assignedCommand.ExecuteNonQueryAsync();
+                    assignedUsers.Add(userId);
+                }
+
+                var result = new
+                {
+                    message = "Assignment completed",
+                    assignedUsers = assignedUsers,
+                    alreadyAssigned = alreadyAssigned,
+                    totalAssigned = assignedUsers.Count,
+                    totalSkipped = alreadyAssigned.Count
+                };
+
+                _logger.LogInformation("Discussion {DiscussionId} assigned to {UserCount} users by user {AssignedByUserId}",
+                    request.DiscussionId, assignedUsers.Count, request.AssignedByUserId);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error assigning users to discussion {DiscussionId}", request.DiscussionId);
+                return StatusCode(500, new { message = "Error assigning users to discussion", error = ex.Message });
+            }
+        }
+
+        [HttpGet("discussions/{discussionId}/assigned-users")]
+        public async Task<ActionResult<List<object>>> GetDiscussionAssignedUsers(int discussionId)
+        {
+            var assignedUsers = new List<object>();
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+                    SELECT dau.AssignedUserId, dau.AssignedByUserId, dau.AssignedAt,
+                        assigned.KullaniciAdi as AssignedUserName,
+                        assigner.KullaniciAdi as AssignedByUserName
+                    FROM DiscussionAssignedUsers dau
+                    LEFT JOIN KullaniciBilgileri assigned ON dau.AssignedUserId = assigned.KullaniciID
+                    LEFT JOIN KullaniciBilgileri assigner ON dau.AssignedByUserId = assigner.KullaniciID
+                    WHERE dau.DiscussionId = @discussionId
+                    ORDER BY dau.AssignedAt DESC";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    assignedUsers.Add(new
+                    {
+                        AssignedUserId = Convert.ToInt32(reader["AssignedUserId"]),
+                        AssignedUserName = reader["AssignedUserName"]?.ToString() ?? "",
+                        AssignedByUserId = Convert.ToInt32(reader["AssignedByUserId"]),
+                        AssignedByUserName = reader["AssignedByUserName"]?.ToString() ?? "",
+                        AssignedAt = Convert.ToDateTime(reader["AssignedAt"])
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching assigned users for discussion {DiscussionId}", discussionId);
+                return StatusCode(500, new { message = "Error fetching assigned users", error = ex.Message });
+            }
+
+            return Ok(assignedUsers);
+        }
 
         // ✅ Send a message
         [HttpPost("messages")]
@@ -1823,12 +2122,12 @@ namespace crmApi.Controllers
                         m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
                         t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
                         d.FileName, d.OriginalFileName, d.MimeType, d.FileSize,
-                        u1.Name AS SenderName, u2.Name AS ReceiverName
+                        u1.Ad AS SenderName, u2.Ad AS ReceiverName
                     FROM ChatMessages m
                     LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
                     LEFT JOIN Tasks t ON m.TaskId = t.Id
-                    LEFT JOIN KullaniciBilgileri u1 ON m.SenderId = u1.Id
-                    LEFT JOIN KullaniciBilgileri u2 ON m.ReceiverId = u2.Id
+                    LEFT JOIN KullaniciBilgileri u1 ON m.SenderId = u1.KullaniciID
+                    LEFT JOIN KullaniciBilgileri u2 ON m.ReceiverId = u2.KullaniciID
                     WHERE m.DiscussionId = @discussionId
                     ORDER BY m.CreatedAt ASC";
 
