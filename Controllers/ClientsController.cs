@@ -225,7 +225,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Details", (object?)clientDto.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Country", (object?)clientDto.Country ?? DBNull.Value);
                 command.Parameters.AddWithValue("@CreatedBy", clientDto.CreatedBy);
-                command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
                 command.Parameters.AddWithValue("@City", (object?)clientDto.City ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Address", (object?)clientDto.Address ?? DBNull.Value);
                 command.Parameters.AddWithValue("@ZipCode", (object?)clientDto.ZipCode ?? DBNull.Value);
@@ -288,7 +288,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Details", (object?)clientDto.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Country", (object?)clientDto.Country ?? DBNull.Value);
                 command.Parameters.AddWithValue("@modifiedBy", clientDto.modifiedBy);
-                command.Parameters.AddWithValue("@ModifiedAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@ModifiedAt", DateTime.Now);
                 command.Parameters.AddWithValue("@Id", id);
                 command.Parameters.AddWithValue("@City", (object?)clientDto.City ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Address", (object?)clientDto.Address ?? DBNull.Value);
@@ -552,7 +552,7 @@ namespace crmApi.Controllers
                 var uploadParams = new RawUploadParams()
                 {
                     File = new FileDescription(fileName, stream),
-                    PublicId = $"chat-files/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{fileName}",
+                    PublicId = $"chat-files/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{fileName}",
                 };
 
                 var uploadResult = await cloudinary.UploadAsync(uploadParams);
@@ -590,7 +590,7 @@ namespace crmApi.Controllers
                 var uploadParams = new VideoUploadParams()
                 {
                     File = new FileDescription(fileName, stream),
-                    PublicId = $"voice-messages/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
+                    PublicId = $"voice-messages/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
                 };
 
                 var uploadResult = await cloudinary.UploadAsync(uploadParams);

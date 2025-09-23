@@ -204,6 +204,9 @@ namespace crmApi.Models
         public List<int> ProjectIds { get; set; }
         public DateTime? EditedAt { get; set; }
         public DateTime CreatedAt { get; set; }
+
+        public bool? IsSeen { get; set; }
+        public DateTime? SeenAt { get; set; }
     }
 
     public class DiscussionResponse

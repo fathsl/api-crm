@@ -61,7 +61,7 @@ namespace crmApi.Models
 
         [Required]
         [Column("CreatedAt")]
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
 
         [Column("UpdatedByUserId")]
         public int? UpdatedByUserId { get; set; }
@@ -99,7 +99,7 @@ namespace crmApi.Models
 
         [Required]
         [Column("AssignedAt")]
-        public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
+        public DateTime AssignedAt { get; set; } = DateTime.Now;
 
         [NotMapped]
         public Task Task { get; set; }

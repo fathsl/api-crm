@@ -134,7 +134,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Title", project.Title);
                 command.Parameters.AddWithValue("@Details", (object?)project.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@CreatedByUserId", project.CreatedByUserId);
-                command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
                 command.Parameters.AddWithValue("@Status", project.Status.ToString());
                 command.Parameters.AddWithValue("@EstimationTime", (object?)project.EstimationTime ?? DBNull.Value);
                 command.Parameters.AddWithValue("@StartDate", (object?)project.StartDate ?? DBNull.Value);
@@ -175,7 +175,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Title", project.Title);
                 command.Parameters.AddWithValue("@Details", (object?)project.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@UpdatedByUserId", project.UpdatedByUserId);
-                command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@UpdatedAt", DateTime.Now);
                 command.Parameters.AddWithValue("@Status", project.Status.ToString());
                 command.Parameters.AddWithValue("@EstimationTime", (object?)project.EstimationTime ?? DBNull.Value);
                 command.Parameters.AddWithValue("@StartDate", (object?)project.StartDate ?? DBNull.Value);

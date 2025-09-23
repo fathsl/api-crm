@@ -201,7 +201,7 @@ namespace crmApi.Controllers
                 insertCommand.Parameters.AddWithValue("@EstimatedTime", createTaskDto.EstimatedTime ?? (object)DBNull.Value);
                 insertCommand.Parameters.AddWithValue("@SortOrder", createTaskDto.SortOrder);
                 insertCommand.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
-                insertCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                insertCommand.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
 
                 var newTaskId = Convert.ToInt32(await insertCommand.ExecuteScalarAsync());
 
@@ -249,7 +249,7 @@ namespace crmApi.Controllers
                 updateCommand.Parameters.AddWithValue("@Id", id);
                 updateCommand.Parameters.AddWithValue("@Status", request.Status);
                 updateCommand.Parameters.AddWithValue("@UpdatedByUserId", request.UpdatedByUserId);
-                updateCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                updateCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.Now);
 
                 int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
 
@@ -329,7 +329,7 @@ namespace crmApi.Controllers
                         using var updateCommand = new MySqlCommand(updateQuery, connection, transaction);
                         updateCommand.Parameters.AddWithValue("@Status", taskOrder.Status.ToString());
                         updateCommand.Parameters.AddWithValue("@SortOrder", taskOrder.SortOrder);
-                        updateCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                        updateCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.Now);
                         updateCommand.Parameters.AddWithValue("@id", taskOrder.Id);
 
                         await updateCommand.ExecuteNonQueryAsync();
@@ -519,7 +519,7 @@ namespace crmApi.Controllers
 
             using var command = new MySqlCommand(insertQuery, connection);
             command.Parameters.AddWithValue("@TaskId", taskId);
-            command.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+            command.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
 
             for (int i = 0; i < userIds.Count; i++)
             {

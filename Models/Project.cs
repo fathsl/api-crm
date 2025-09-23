@@ -32,7 +32,7 @@ namespace crmApi.Models
 
         [Required]
         [Column("CreatedAt")]
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
 
         [Column("UpdatedByUserId")]
         public int? UpdatedByUserId { get; set; }

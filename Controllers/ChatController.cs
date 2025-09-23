@@ -429,72 +429,97 @@ namespace crmApi.Controllers
 
         // ✅ Get messages for a discussion
         [HttpGet("discussions/{discussionId}/messages")]
-        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int userId)
+        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int? userId = null)
         {
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string assignmentQuery = @"
-                        SELECT AssignedAt FROM DiscussionAssignedUsers 
-                        WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+                DateTime? userAssignmentTime = null;
+                bool isDiscussionCreator = false;
 
-                DateTime? userAssignedAt = null;
-                using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
-                assignmentCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                assignmentCommand.Parameters.AddWithValue("@userId", userId);
-
-                var assignmentResult = await assignmentCommand.ExecuteScalarAsync();
-                if (assignmentResult != null)
+                if (userId.HasValue)
                 {
-                    userAssignedAt = Convert.ToDateTime(assignmentResult);
+                    string creatorQuery = @"
+            SELECT CreatedByUserId FROM Discussions 
+            WHERE Id = @discussionId";
+
+                    using var creatorCommand = new MySqlCommand(creatorQuery, connection);
+                    creatorCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                    var creatorResult = await creatorCommand.ExecuteScalarAsync();
+                    if (creatorResult != null && creatorResult != DBNull.Value)
+                    {
+                        int creatorId = Convert.ToInt32(creatorResult);
+                        isDiscussionCreator = (userId.Value == creatorId);
+                        _logger.LogInformation("User {UserId} is creator: {IsCreator} for discussion {DiscussionId}",
+                            userId.Value, isDiscussionCreator, discussionId);
+                    }
+
+                    if (!isDiscussionCreator)
+                    {
+                        string assignmentQuery = @"
+                SELECT AssignedAt FROM DiscussionAssignedUsers 
+                WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+
+                        using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
+                        assignmentCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                        assignmentCommand.Parameters.AddWithValue("@userId", userId.Value);
+
+                        var assignmentResult = await assignmentCommand.ExecuteScalarAsync();
+                        if (assignmentResult != null && assignmentResult != DBNull.Value)
+                        {
+                            userAssignmentTime = Convert.ToDateTime(assignmentResult);
+                            _logger.LogInformation("User {UserId} assigned to discussion {DiscussionId} at {AssignmentTime}",
+                                userId.Value, discussionId, userAssignmentTime);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("User {UserId} is NOT assigned to discussion {DiscussionId}",
+                                userId.Value, discussionId);
+                        }
+                    }
                 }
 
-                string permissionQuery = @"
-                        SELECT d.CreatedByUserId, kb.YetkiTuru 
-                        FROM Discussions d 
-                        LEFT JOIN KullaniciBilgileri kb ON kb.KullaniciID = @userId 
-                        WHERE d.Id = @discussionId";
+                string whereClause = "WHERE m.DiscussionId = @discussionId";
+                string taskWhereClause = "";
 
-                using var permissionCommand = new MySqlCommand(permissionQuery, connection);
-                permissionCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                permissionCommand.Parameters.AddWithValue("@userId", userId);
-
-                bool isCreatorOrAdmin = false;
-                using var permissionReader = await permissionCommand.ExecuteReaderAsync();
-                if (await permissionReader.ReadAsync())
+                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
                 {
-                    var creatorId = Convert.ToInt32(permissionReader["CreatedByUserId"]);
-                    var userRole = permissionReader["YetkiTuru"]?.ToString() ?? "";
-                    isCreatorOrAdmin = creatorId == userId || userRole == "Yonetici";
+                    whereClause += " AND m.CreatedAt >= @assignmentTime";
+                    taskWhereClause = " AND (t.Id IS NULL OR t.CreatedAt >= @assignmentTime)";
+                    _logger.LogInformation("Applying message and task filter: CreatedAt >= {AssignmentTime}", userAssignmentTime);
                 }
-                permissionReader.Close();
-
-                string query = @"
-                    SELECT 
-                        m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
-                        m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
-                        m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
-                        t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
-                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey
-                    FROM ChatMessages m
-                    LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
-                    LEFT JOIN Tasks t ON m.TaskId = t.Id
-                    WHERE m.DiscussionId = @discussionId";
-
-                if (userAssignedAt.HasValue && !isCreatorOrAdmin)
+                else if (userId.HasValue && !isDiscussionCreator && !userAssignmentTime.HasValue)
                 {
-                    query += " AND m.CreatedAt >= @assignedAt";
+                    _logger.LogInformation("User {UserId} is not creator and not assigned to discussion {DiscussionId}, returning empty message list",
+                        userId.Value, discussionId);
+                    return Ok(new List<MessageResponse>());
                 }
 
-                query += " ORDER BY m.CreatedAt ASC";
+                string query = $@"
+            SELECT 
+                m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
+                m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
+                m.TaskId,m.IsSeen, m.SeenAt,t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
+                t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime, t.CreatedAt AS TaskCreatedAt,
+                d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey,
+                u1.Ad AS SenderName, u2.Ad AS ReceiverName
+            FROM ChatMessages m
+            LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
+            LEFT JOIN Tasks t ON m.TaskId = t.Id{taskWhereClause}
+            LEFT JOIN KullaniciBilgileri u1 ON m.SenderId = u1.KullaniciID
+            LEFT JOIN KullaniciBilgileri u2 ON m.ReceiverId = u2.KullaniciID
+            {whereClause}
+            ORDER BY m.CreatedAt ASC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
-                if (userAssignedAt.HasValue && !isCreatorOrAdmin)
+
+                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
                 {
-                    command.Parameters.AddWithValue("@assignedAt", userAssignedAt.Value);
+                    command.Parameters.AddWithValue("@assignmentTime", userAssignmentTime.Value);
                 }
 
                 var messages = new List<MessageResponse>();
@@ -505,6 +530,13 @@ namespace crmApi.Controllers
                     var fileReference = reader.IsDBNull(reader.GetOrdinal("FileReference")) ? null : reader["FileReference"].ToString();
                     var duration = reader.IsDBNull(reader.GetOrdinal("Duration")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("Duration"));
                     var taskId = reader.IsDBNull(reader.GetOrdinal("TaskId")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("TaskId"));
+
+                    if (Convert.ToByte(reader["MessageType"]) == 3 && taskId.HasValue && reader.IsDBNull(reader.GetOrdinal("TaskTitle")))
+                    {
+                        _logger.LogInformation("Skipping task message {MessageId} because task {TaskId} was created before user assignment",
+                            reader["Id"], taskId);
+                        continue;
+                    }
 
                     var message = new MessageResponse
                     {
@@ -532,7 +564,11 @@ namespace crmApi.Controllers
                         AssignedUserIds = new List<int>(),
                         IDriveUrl = reader["IDriveUrl"]?.ToString(),
                         BucketName = reader["BucketName"]?.ToString(),
-                        FileKey = reader["FileKey"]?.ToString()
+                        FileKey = reader["FileKey"]?.ToString(),
+                        SenderName = reader.IsDBNull(reader.GetOrdinal("SenderName")) ? null : reader["SenderName"].ToString(),
+                        IsSeen = reader.IsDBNull(reader.GetOrdinal("IsSeen")) ? false : Convert.ToBoolean(reader["IsSeen"]),
+                        SeenAt = reader.IsDBNull(reader.GetOrdinal("SeenAt")) ? null : reader.GetDateTime(reader.GetOrdinal("SeenAt")),
+                        ReceiverName = reader.IsDBNull(reader.GetOrdinal("ReceiverName")) ? null : reader["ReceiverName"].ToString()
                     };
 
                     messages.Add(message);
@@ -540,20 +576,27 @@ namespace crmApi.Controllers
 
                 reader.Close();
 
-                foreach (var message in messages.Where(m => m.TaskId.HasValue))
+                _logger.LogInformation("Found {MessageCount} messages for discussion {DiscussionId}, user {UserId}",
+                    messages.Count, discussionId, userId);
+
+                var taskMessages = messages.Where(m => m.MessageType == 3 && m.TaskId.HasValue).ToList();
+                _logger.LogInformation("Found {TaskMessageCount} task messages", taskMessages.Count);
+
+                foreach (var message in taskMessages)
                 {
                     string assignQuery = @"
-                SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
+            SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
+
                     using var assignCommand = new MySqlCommand(assignQuery, connection);
                     assignCommand.Parameters.AddWithValue("@taskId", message.TaskId);
+
                     using var assignReader = await assignCommand.ExecuteReaderAsync();
                     while (await assignReader.ReadAsync())
                     {
                         message.AssignedUserIds.Add(assignReader.GetInt32(assignReader.GetOrdinal("UserId")));
                     }
+                    assignReader.Close();
                 }
-
-                var voiceMessages = messages.Where(m => m.MessageType == (byte)MessageType.Voice).ToList();
 
                 return Ok(messages);
             }
@@ -848,8 +891,8 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, CreatedAt)
-                                 VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @createdAt);
+                string query = @"INSERT INTO ChatMessages (DiscussionId, SenderId, ReceiverId, Content, MessageType, CreatedAt ,IsSeen, SeenAt)
+                                 VALUES (@discussionId, @senderId, @receiverId, @content, @messageType, @createdAt, @isSeen, @seenAt);
                                  SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(query, connection);
@@ -859,6 +902,8 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@content", request.Content);
                 command.Parameters.AddWithValue("@messageType", request.MessageType);
                 command.Parameters.AddWithValue("@createdAt", DateTime.Now);
+                command.Parameters.AddWithValue("@isSeen", false);
+                command.Parameters.AddWithValue("@seenAt", DBNull.Value);
 
                 var messageId = Convert.ToInt32(await command.ExecuteScalarAsync());
 
@@ -871,7 +916,9 @@ namespace crmApi.Controllers
                     Content = request.Content,
                     MessageType = request.MessageType,
                     IsEdited = false,
-                    CreatedAt = DateTime.Now
+                    CreatedAt = DateTime.Now,
+                    IsSeen = false,
+                    SeenAt = null
                 });
             }
             catch (Exception ex)
@@ -954,6 +1001,7 @@ namespace crmApi.Controllers
             }
         }
 
+
         [HttpPost("messages/send-with-file")]
         public async Task<IActionResult> SendMessageWithFile([FromForm] SendMessageWithFileRequest request, IFormFile file)
         {
@@ -995,7 +1043,8 @@ namespace crmApi.Controllers
                     FileName, 
                     MimeType, 
                     FileSize, 
-                    FileReference
+                    FileReference,
+                    CreatedAt
                 ) VALUES (
                     @discussionId, 
                     @senderId, 
@@ -1006,7 +1055,8 @@ namespace crmApi.Controllers
                     @fileName, 
                     @mimeType, 
                     @fileSize, 
-                    @fileReference
+                    @fileReference,
+                    @createdAt
                 );
                 SELECT LAST_INSERT_ID();";
 
@@ -1020,7 +1070,8 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@fileName", file.FileName);
                     messageCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
                     messageCommand.Parameters.AddWithValue("@fileSize", file.Length);
-                    messageCommand.Parameters.AddWithValue("@fileReference", request.FileReference ?? $"ref_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{file.FileName}");
+                    messageCommand.Parameters.AddWithValue("@fileReference", request.FileReference ?? $"ref_{DateTimeOffset.Now.ToUnixTimeSeconds()}_{file.FileName}");
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                     var messageIdResult = await messageCommand.ExecuteScalarAsync();
                     var messageId = Convert.ToInt32(messageIdResult);
@@ -1058,7 +1109,7 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "chat-files");
-                    docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}");
+                    docCommand.Parameters.AddWithValue("@fileKey", request.FileKey ?? $"{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}");
 
                     await docCommand.ExecuteNonQueryAsync();
                     await transaction.CommitAsync();
@@ -1073,14 +1124,14 @@ namespace crmApi.Controllers
                         receiverId = request.ReceiverId,
                         content = request.Content ?? $"File: {file.FileName}",
                         messageType = request.MessageType,
-                        createdAt = DateTime.UtcNow,
+                        createdAt = DateTime.Now,
                         fileName = file.FileName,
                         fileSize = file.Length,
                         mimeType = file.ContentType,
                         idriveUrl = cloudinaryUrl,
                         fileReference = request.FileReference,
                         bucketName = request.BucketName ?? "chat-files",
-                        fileKey = request.FileKey ?? $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}",
+                        fileKey = request.FileKey ?? $"{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}",
                         hasFile = true
                     });
                 }
@@ -1133,8 +1184,8 @@ namespace crmApi.Controllers
 
                 try
                 {
-                    var fileReference = request.FileReference ?? $"voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}";
-                    var fileKey = request.FileKey ?? $"voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
+                    var fileReference = request.FileReference ?? $"voice_{DateTimeOffset.Now.ToUnixTimeSeconds()}_{audioFile.FileName}";
+                    var fileKey = request.FileKey ?? $"voice/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
 
                     string messageQuery = @"
                 INSERT INTO ChatMessages (
@@ -1148,7 +1199,8 @@ namespace crmApi.Controllers
                     MimeType, 
                     FileSize, 
                     FileReference,
-                    Duration
+                    Duration,
+                    CreatedAt
                 ) VALUES (
                     @discussionId, 
                     @senderId, 
@@ -1160,7 +1212,8 @@ namespace crmApi.Controllers
                     @mimeType, 
                     @fileSize, 
                     @fileReference,
-                    @duration
+                    @duration,
+                    @createdAt
                 );
                 SELECT LAST_INSERT_ID();";
 
@@ -1176,6 +1229,7 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
                     messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
                     messageCommand.Parameters.AddWithValue("@duration", request.Duration ?? (object)DBNull.Value);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                     var messageIdResult = await messageCommand.ExecuteScalarAsync();
                     var messageId = Convert.ToInt32(messageIdResult);
@@ -1213,7 +1267,7 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
                     docCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
                     docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
-                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", request.BucketName ?? "voice-messages");
                     docCommand.Parameters.AddWithValue("@fileKey", fileKey);
@@ -1231,7 +1285,7 @@ namespace crmApi.Controllers
                         receiverId = request.ReceiverId,
                         content = request.Content ?? "Voice message",
                         messageType = request.MessageType,
-                        createdAt = DateTime.UtcNow,
+                        createdAt = DateTime.Now,
                         fileName = audioFile.FileName,
                         originalFileName = audioFile.FileName,
                         fileSize = audioFile.Length,
@@ -1460,7 +1514,7 @@ namespace crmApi.Controllers
                     BucketName = bucketName,
                     Key = fileName,
                     Verb = HttpVerb.GET,
-                    Expires = DateTime.UtcNow.AddHours(24)
+                    Expires = DateTime.Now.AddHours(24)
                 });
 
                 return Ok(new { accessUrl = presignedUrl });
@@ -1518,7 +1572,7 @@ namespace crmApi.Controllers
                     taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
                     taskCommand.Parameters.AddWithValue("@SortOrder", 0);
                     taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
 
                     var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
                     _logger.LogInformation($"Task created with ID: {taskId}");
@@ -1531,7 +1585,7 @@ namespace crmApi.Controllers
 
                         using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
                         assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                         for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
                         {
                             assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
@@ -1572,8 +1626,8 @@ namespace crmApi.Controllers
                         _logger.LogInformation($"Assigned projects to task ID: {taskId}");
                     }
 
-                    var fileReference = $"task_file_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{file.FileName}";
-                    var fileKey = $"task-files/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}";
+                    var fileReference = $"task_file_{DateTimeOffset.Now.ToUnixTimeSeconds()}_{file.FileName}";
+                    var fileKey = $"task-files/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{file.FileName}";
 
                     string messageQuery = @"
                 INSERT INTO ChatMessages (
@@ -1617,7 +1671,7 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
                     messageCommand.Parameters.AddWithValue("@fileSize", file.Length);
                     messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
-                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                     var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
                     _logger.LogInformation($"Task message created with ID: {messageId}");
@@ -1655,7 +1709,7 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@fileSize", file.Length);
                     docCommand.Parameters.AddWithValue("@mimeType", file.ContentType ?? "application/octet-stream");
                     docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
-                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", "task-files");
                     docCommand.Parameters.AddWithValue("@fileKey", fileKey);
@@ -1692,7 +1746,7 @@ namespace crmApi.Controllers
                         FileName = file.FileName,
                         MimeType = file.ContentType,
                         FileSize = file.Length,
-                        CreatedAt = DateTime.UtcNow,
+                        CreatedAt = DateTime.Now,
                         HasFile = true,
                         FileUrl = cloudinaryUrl,
                         IDriveUrl = cloudinaryUrl
@@ -1759,7 +1813,7 @@ namespace crmApi.Controllers
                     taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
                     taskCommand.Parameters.AddWithValue("@SortOrder", 0);
                     taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                    taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
 
                     var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
                     _logger.LogInformation($"Task created with ID: {taskId}");
@@ -1772,7 +1826,7 @@ namespace crmApi.Controllers
 
                         using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
                         assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                        assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                         for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
                         {
                             assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
@@ -1780,8 +1834,8 @@ namespace crmApi.Controllers
                         await assignCommand.ExecuteNonQueryAsync();
                     }
 
-                    var fileReference = $"task_voice_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{audioFile.FileName}";
-                    var fileKey = $"task-voice/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
+                    var fileReference = $"task_voice_{DateTimeOffset.Now.ToUnixTimeSeconds()}_{audioFile.FileName}";
+                    var fileKey = $"task-voice/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{audioFile.FileName}";
 
                     string messageQuery = @"
                 INSERT INTO ChatMessages (
@@ -1828,7 +1882,7 @@ namespace crmApi.Controllers
                     messageCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
                     messageCommand.Parameters.AddWithValue("@fileReference", fileReference);
                     messageCommand.Parameters.AddWithValue("@duration", createTaskMessage.Duration ?? (object)DBNull.Value);
-                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                    messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                     var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
                     _logger.LogInformation($"Task message created with ID: {messageId}");
@@ -1865,7 +1919,7 @@ namespace crmApi.Controllers
                     docCommand.Parameters.AddWithValue("@fileSize", audioFile.Length);
                     docCommand.Parameters.AddWithValue("@mimeType", audioFile.ContentType ?? "audio/webm");
                     docCommand.Parameters.AddWithValue("@filePath", cloudinaryUrl);
-                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.UtcNow);
+                    docCommand.Parameters.AddWithValue("@uploadedAt", DateTime.Now);
                     docCommand.Parameters.AddWithValue("@idriveUrl", cloudinaryUrl);
                     docCommand.Parameters.AddWithValue("@bucketName", "task-voice-messages");
                     docCommand.Parameters.AddWithValue("@fileKey", fileKey);
@@ -1897,7 +1951,7 @@ namespace crmApi.Controllers
                         MimeType = audioFile.ContentType,
                         FileSize = audioFile.Length,
                         Duration = createTaskMessage.Duration,
-                        CreatedAt = DateTime.UtcNow,
+                        CreatedAt = DateTime.Now,
                         HasFile = true,
                         AudioUrl = cloudinaryUrl
                     });
@@ -1942,7 +1996,7 @@ namespace crmApi.Controllers
                 taskCommand.Parameters.AddWithValue("@EstimatedTime", createTaskMessage.EstimatedTime ?? (object)DBNull.Value);
                 taskCommand.Parameters.AddWithValue("@SortOrder", 0);
                 taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
 
                 var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
 
@@ -1954,7 +2008,7 @@ namespace crmApi.Controllers
 
                     using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
                     assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < createTaskMessage.AssignedUserIds.Count; i++)
                     {
                         assignCommand.Parameters.AddWithValue($"@UserId{i}", createTaskMessage.AssignedUserIds[i]);
@@ -1970,7 +2024,7 @@ namespace crmApi.Controllers
 
                     using var clientCommand = new MySqlCommand(clientQuery, connection, transaction);
                     clientCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    clientCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    clientCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < createTaskMessage.ClientIds.Count; i++)
                     {
                         clientCommand.Parameters.AddWithValue($"@ClientId{i}", createTaskMessage.ClientIds[i]);
@@ -1986,7 +2040,7 @@ namespace crmApi.Controllers
 
                     using var projectCommand = new MySqlCommand(projectQuery, connection, transaction);
                     projectCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    projectCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    projectCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < createTaskMessage.ProjectIds.Count; i++)
                     {
                         projectCommand.Parameters.AddWithValue($"@ProjectId{i}", createTaskMessage.ProjectIds[i]);
@@ -2006,7 +2060,7 @@ namespace crmApi.Controllers
                 messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
                 messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
                 messageCommand.Parameters.AddWithValue("@taskId", taskId);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                 var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
 
@@ -2032,7 +2086,7 @@ namespace crmApi.Controllers
                     AssignedUserIds = createTaskMessage.AssignedUserIds ?? new List<int>(),
                     ClientIds = createTaskMessage.ClientIds ?? new List<int>(),
                     ProjectIds = createTaskMessage.ProjectIds ?? new List<int>(),
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
@@ -2569,7 +2623,7 @@ namespace crmApi.Controllers
                 var uploadParams = new RawUploadParams()
                 {
                     File = new FileDescription(fileName, stream),
-                    PublicId = $"chat-files/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{fileName}",
+                    PublicId = $"chat-files/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{fileName}",
                 };
 
                 var uploadResult = await cloudinary.UploadAsync(uploadParams);
@@ -2608,7 +2662,7 @@ namespace crmApi.Controllers
                 var uploadParams = new VideoUploadParams()
                 {
                     File = new FileDescription(fileName, stream),
-                    PublicId = $"voice-messages/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
+                    PublicId = $"voice-messages/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
                 };
 
                 _logger.LogInformation($"Starting Cloudinary audio upload for: {fileName}");
@@ -2644,25 +2698,25 @@ namespace crmApi.Controllers
                 FROM ChatMessages
                 WHERE DiscussionId = @discussionId AND TaskId IS NOT NULL";
 
-                    using (var chatCommand = new MySqlCommand(chatTaskQuery, connection))
+                using (var chatCommand = new MySqlCommand(chatTaskQuery, connection))
+                {
+                    chatCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                    using var reader = await chatCommand.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
                     {
-                        chatCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                        using var reader = await chatCommand.ExecuteReaderAsync();
-                        while (await reader.ReadAsync())
+                        int taskIdOrdinal = reader.GetOrdinal("TaskId");
+                        if (!reader.IsDBNull(taskIdOrdinal))
                         {
-                            int taskIdOrdinal = reader.GetOrdinal("TaskId");
-                            if (!reader.IsDBNull(taskIdOrdinal))
-                            {
-                                taskIds.Add(reader.GetInt32(taskIdOrdinal));
-                            }
+                            taskIds.Add(reader.GetInt32(taskIdOrdinal));
                         }
                     }
+                }
 
-                    var tasks = new List<TaskWithMediaDto>();
+                var tasks = new List<TaskWithMediaDto>();
 
-                    if (taskIds.Any())
-                    {
-                        string taskQuery = @"
+                if (taskIds.Any())
+                {
+                    string taskQuery = @"
                     SELECT t.*, 
                         cu.Ad as CreatedByUserName, cu.Soyad as CreatedByUserSurname,
                         uu.Ad as UpdatedByUserName, uu.Soyad as UpdatedByUserSurname
@@ -2672,198 +2726,198 @@ namespace crmApi.Controllers
                     WHERE t.Id IN (" + string.Join(",", taskIds) + @")
                     ORDER BY t.SortOrder, t.CreatedAt DESC";
 
-                        using (var taskCommand = new MySqlCommand(taskQuery, connection))
-                        using (var taskReader = await taskCommand.ExecuteReaderAsync())
+                    using (var taskCommand = new MySqlCommand(taskQuery, connection))
+                    using (var taskReader = await taskCommand.ExecuteReaderAsync())
+                    {
+                        while (await taskReader.ReadAsync())
                         {
-                            while (await taskReader.ReadAsync())
+                            var task = new TaskWithMediaDto
                             {
-                                var task = new TaskWithMediaDto
-                                {
-                                    Id = taskReader.GetInt32(taskReader.GetOrdinal("Id")),
-                                    Title = taskReader.GetString(taskReader.GetOrdinal("Title")),
-                                    Description = taskReader.IsDBNull(taskReader.GetOrdinal("Description"))
-                                        ? null
-                                        : taskReader.GetString(taskReader.GetOrdinal("Description")),
-                                    Status = Enum.Parse<Models.TaskStatus>(
-                                        taskReader.GetString(taskReader.GetOrdinal("Status"))
-                                    ),
-                                    Priority = Enum.Parse<TaskPriority>(
-                                        taskReader.GetString(taskReader.GetOrdinal("Priority"))
-                                    ),
-                                    DueDate = taskReader.IsDBNull(taskReader.GetOrdinal("DueDate"))
-                                        ? null
-                                        : taskReader.GetDateTime(taskReader.GetOrdinal("DueDate")),
-                                    EstimatedTime = taskReader.IsDBNull(taskReader.GetOrdinal("EstimatedTime"))
-                                        ? null
-                                        : taskReader.GetString(taskReader.GetOrdinal("EstimatedTime")),
-                                    SortOrder = taskReader.GetInt32(taskReader.GetOrdinal("SortOrder")),
-                                    CreatedByUserId = taskReader.GetInt32(taskReader.GetOrdinal("CreatedByUserId")),
-                                    CreatedByUserName = taskReader.IsDBNull(taskReader.GetOrdinal("CreatedByUserName"))
-                                        ? ""
-                                        : $"{taskReader.GetString(taskReader.GetOrdinal("CreatedByUserName"))} {taskReader.GetString(taskReader.GetOrdinal("CreatedByUserSurname"))}",
-                                    CreatedAt = taskReader.GetDateTime(taskReader.GetOrdinal("CreatedAt")),
-                                    UpdatedByUserId = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedByUserId"))
-                                        ? null
-                                        : taskReader.GetInt32(taskReader.GetOrdinal("UpdatedByUserId")),
-                                    UpdatedByUserName = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedByUserName"))
-                                        ? null
-                                        : $"{taskReader.GetString(taskReader.GetOrdinal("UpdatedByUserName"))} {taskReader.GetString(taskReader.GetOrdinal("UpdatedByUserSurname"))}",
-                                    UpdatedAt = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedAt"))
-                                        ? null
-                                        : taskReader.GetDateTime(taskReader.GetOrdinal("UpdatedAt")),
-                                    DiscussionId = discussionId
-                                };
-                                tasks.Add(task);
-                            }
+                                Id = taskReader.GetInt32(taskReader.GetOrdinal("Id")),
+                                Title = taskReader.GetString(taskReader.GetOrdinal("Title")),
+                                Description = taskReader.IsDBNull(taskReader.GetOrdinal("Description"))
+                                    ? null
+                                    : taskReader.GetString(taskReader.GetOrdinal("Description")),
+                                Status = Enum.Parse<Models.TaskStatus>(
+                                    taskReader.GetString(taskReader.GetOrdinal("Status"))
+                                ),
+                                Priority = Enum.Parse<TaskPriority>(
+                                    taskReader.GetString(taskReader.GetOrdinal("Priority"))
+                                ),
+                                DueDate = taskReader.IsDBNull(taskReader.GetOrdinal("DueDate"))
+                                    ? null
+                                    : taskReader.GetDateTime(taskReader.GetOrdinal("DueDate")),
+                                EstimatedTime = taskReader.IsDBNull(taskReader.GetOrdinal("EstimatedTime"))
+                                    ? null
+                                    : taskReader.GetString(taskReader.GetOrdinal("EstimatedTime")),
+                                SortOrder = taskReader.GetInt32(taskReader.GetOrdinal("SortOrder")),
+                                CreatedByUserId = taskReader.GetInt32(taskReader.GetOrdinal("CreatedByUserId")),
+                                CreatedByUserName = taskReader.IsDBNull(taskReader.GetOrdinal("CreatedByUserName"))
+                                    ? ""
+                                    : $"{taskReader.GetString(taskReader.GetOrdinal("CreatedByUserName"))} {taskReader.GetString(taskReader.GetOrdinal("CreatedByUserSurname"))}",
+                                CreatedAt = taskReader.GetDateTime(taskReader.GetOrdinal("CreatedAt")),
+                                UpdatedByUserId = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedByUserId"))
+                                    ? null
+                                    : taskReader.GetInt32(taskReader.GetOrdinal("UpdatedByUserId")),
+                                UpdatedByUserName = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedByUserName"))
+                                    ? null
+                                    : $"{taskReader.GetString(taskReader.GetOrdinal("UpdatedByUserName"))} {taskReader.GetString(taskReader.GetOrdinal("UpdatedByUserSurname"))}",
+                                UpdatedAt = taskReader.IsDBNull(taskReader.GetOrdinal("UpdatedAt"))
+                                    ? null
+                                    : taskReader.GetDateTime(taskReader.GetOrdinal("UpdatedAt")),
+                                DiscussionId = discussionId
+                            };
+                            tasks.Add(task);
                         }
+                    }
 
-                        if (tasks.Any())
-                        {
-                            var allAssignedUsers = new Dictionary<int, List<UserResponseDto>>();
-                            string userQuery = @"
+                    if (tasks.Any())
+                    {
+                        var allAssignedUsers = new Dictionary<int, List<UserResponseDto>>();
+                        string userQuery = @"
                         SELECT ta.TaskId, u.KullaniciID, u.KullaniciAdi, u.Ad, u.Soyad, 
                             u.Email, u.Telefon, u.Durum, u.YetkiTuru
                         FROM TaskAssignments ta
                         JOIN KullaniciBilgileri u ON ta.UserId = u.KullaniciID
                         WHERE ta.TaskId IN (" + string.Join(",", taskIds) + ")";
 
-                            using (var userCommand = new MySqlCommand(userQuery, connection))
-                            using (var userReader = await userCommand.ExecuteReaderAsync())
+                        using (var userCommand = new MySqlCommand(userQuery, connection))
+                        using (var userReader = await userCommand.ExecuteReaderAsync())
+                        {
+                            while (await userReader.ReadAsync())
                             {
-                                while (await userReader.ReadAsync())
+                                var taskId = (int)userReader["TaskId"];
+                                var user = new UserResponseDto
                                 {
-                                    var taskId = (int)userReader["TaskId"];
-                                    var user = new UserResponseDto
-                                    {
-                                        KullaniciID = (int)userReader["KullaniciID"],
-                                        KullaniciAdi = userReader["KullaniciAdi"].ToString(),
-                                        Ad = userReader["Ad"].ToString(),
-                                        Soyad = userReader["Soyad"].ToString(),
-                                        Email = userReader["Email"] as string,
-                                        Telefon = userReader["Telefon"] as string,
-                                        Durum = userReader["Durum"].ToString(),
-                                        YetkiTuru = userReader["YetkiTuru"].ToString()
-                                    };
+                                    KullaniciID = (int)userReader["KullaniciID"],
+                                    KullaniciAdi = userReader["KullaniciAdi"].ToString(),
+                                    Ad = userReader["Ad"].ToString(),
+                                    Soyad = userReader["Soyad"].ToString(),
+                                    Email = userReader["Email"] as string,
+                                    Telefon = userReader["Telefon"] as string,
+                                    Durum = userReader["Durum"].ToString(),
+                                    YetkiTuru = userReader["YetkiTuru"].ToString()
+                                };
 
-                                    if (!allAssignedUsers.ContainsKey(taskId))
-                                        allAssignedUsers[taskId] = new List<UserResponseDto>();
+                                if (!allAssignedUsers.ContainsKey(taskId))
+                                    allAssignedUsers[taskId] = new List<UserResponseDto>();
 
-                                    allAssignedUsers[taskId].Add(user);
-                                }
+                                allAssignedUsers[taskId].Add(user);
                             }
+                        }
 
-                            var allTaskClients = new Dictionary<int, List<int>>();
-                            string clientQuery = @"
+                        var allTaskClients = new Dictionary<int, List<int>>();
+                        string clientQuery = @"
                         SELECT TaskId, ClientId
                         FROM TaskClients
                         WHERE TaskId IN (" + string.Join(",", taskIds) + ")";
 
-                            using (var clientCommand = new MySqlCommand(clientQuery, connection))
-                            using (var clientReader = await clientCommand.ExecuteReaderAsync())
+                        using (var clientCommand = new MySqlCommand(clientQuery, connection))
+                        using (var clientReader = await clientCommand.ExecuteReaderAsync())
+                        {
+                            while (await clientReader.ReadAsync())
                             {
-                                while (await clientReader.ReadAsync())
-                                {
-                                    var taskId = (int)clientReader["TaskId"];
-                                    var clientId = (int)clientReader["ClientId"];
+                                var taskId = (int)clientReader["TaskId"];
+                                var clientId = (int)clientReader["ClientId"];
 
-                                    if (!allTaskClients.ContainsKey(taskId))
-                                        allTaskClients[taskId] = new List<int>();
+                                if (!allTaskClients.ContainsKey(taskId))
+                                    allTaskClients[taskId] = new List<int>();
 
-                                    allTaskClients[taskId].Add(clientId);
-                                }
+                                allTaskClients[taskId].Add(clientId);
                             }
+                        }
 
-                            var allTaskProjects = new Dictionary<int, List<int>>();
-                            string projectQuery = @"
+                        var allTaskProjects = new Dictionary<int, List<int>>();
+                        string projectQuery = @"
                         SELECT TaskId, ProjectId
                         FROM TaskProjects
                         WHERE TaskId IN (" + string.Join(",", taskIds) + ")";
 
-                            using (var projectCommand = new MySqlCommand(projectQuery, connection))
-                            using (var projectReader = await projectCommand.ExecuteReaderAsync())
+                        using (var projectCommand = new MySqlCommand(projectQuery, connection))
+                        using (var projectReader = await projectCommand.ExecuteReaderAsync())
+                        {
+                            while (await projectReader.ReadAsync())
                             {
-                                while (await projectReader.ReadAsync())
-                                {
-                                    var taskId = (int)projectReader["TaskId"];
-                                    var projectId = (int)projectReader["ProjectId"];
+                                var taskId = (int)projectReader["TaskId"];
+                                var projectId = (int)projectReader["ProjectId"];
 
-                                    if (!allTaskProjects.ContainsKey(taskId))
-                                        allTaskProjects[taskId] = new List<int>();
+                                if (!allTaskProjects.ContainsKey(taskId))
+                                    allTaskProjects[taskId] = new List<int>();
 
-                                    allTaskProjects[taskId].Add(projectId);
-                                }
+                                allTaskProjects[taskId].Add(projectId);
                             }
+                        }
 
-                            var discussionParticipants = new Dictionary<int, List<UserResponseDto>>();
-                            string participantQuery = @"
+                        var discussionParticipants = new Dictionary<int, List<UserResponseDto>>();
+                        string participantQuery = @"
                         SELECT DISTINCT cm.DiscussionId, cm.ReceiverId, u.KullaniciID, u.KullaniciAdi, u.Ad, u.Soyad, 
                             u.Email, u.Telefon, u.Durum, u.YetkiTuru
                         FROM ChatMessages cm
                         JOIN KullaniciBilgileri u ON cm.ReceiverId = u.KullaniciID
                         WHERE cm.DiscussionId = @discussionId AND cm.ReceiverId IS NOT NULL";
 
-                            using (var participantCommand = new MySqlCommand(participantQuery, connection))
+                        using (var participantCommand = new MySqlCommand(participantQuery, connection))
+                        {
+                            participantCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                            using (var participantReader = await participantCommand.ExecuteReaderAsync())
                             {
-                                participantCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                                using (var participantReader = await participantCommand.ExecuteReaderAsync())
+                                while (await participantReader.ReadAsync())
                                 {
-                                    while (await participantReader.ReadAsync())
+                                    var discId = (int)participantReader["DiscussionId"];
+                                    var user = new UserResponseDto
                                     {
-                                        var discId = (int)participantReader["DiscussionId"];
-                                        var user = new UserResponseDto
-                                        {
-                                            KullaniciID = (int)participantReader["KullaniciID"],
-                                            KullaniciAdi = participantReader["KullaniciAdi"].ToString(),
-                                            Ad = participantReader["Ad"].ToString(),
-                                            Soyad = participantReader["Soyad"].ToString(),
-                                            Email = participantReader["Email"] as string,
-                                            Telefon = participantReader["Telefon"] as string,
-                                            Durum = participantReader["Durum"].ToString(),
-                                            YetkiTuru = participantReader["YetkiTuru"].ToString()
-                                        };
+                                        KullaniciID = (int)participantReader["KullaniciID"],
+                                        KullaniciAdi = participantReader["KullaniciAdi"].ToString(),
+                                        Ad = participantReader["Ad"].ToString(),
+                                        Soyad = participantReader["Soyad"].ToString(),
+                                        Email = participantReader["Email"] as string,
+                                        Telefon = participantReader["Telefon"] as string,
+                                        Durum = participantReader["Durum"].ToString(),
+                                        YetkiTuru = participantReader["YetkiTuru"].ToString()
+                                    };
 
-                                        if (!discussionParticipants.ContainsKey(discId))
-                                            discussionParticipants[discId] = new List<UserResponseDto>();
+                                    if (!discussionParticipants.ContainsKey(discId))
+                                        discussionParticipants[discId] = new List<UserResponseDto>();
 
-                                        if (!discussionParticipants[discId].Any(u => u.KullaniciID == user.KullaniciID))
-                                            discussionParticipants[discId].Add(user);
-                                    }
+                                    if (!discussionParticipants[discId].Any(u => u.KullaniciID == user.KullaniciID))
+                                        discussionParticipants[discId].Add(user);
                                 }
                             }
+                        }
 
-                            foreach (var task in tasks)
+                        foreach (var task in tasks)
+                        {
+                            if (allAssignedUsers.TryGetValue(task.Id, out var users))
+                                task.AssignedUsers = users;
+                            else
+                                task.AssignedUsers = new List<UserResponseDto>();
+
+                            if (allTaskClients.TryGetValue(task.Id, out var clientIds))
+                                task.ClientIds = clientIds;
+                            else
+                                task.ClientIds = new List<int>();
+
+                            if (allTaskProjects.TryGetValue(task.Id, out var projectIds))
+                                task.ProjectIds = projectIds;
+                            else
+                                task.ProjectIds = new List<int>();
+
+                            if (discussionParticipants.TryGetValue(discussionId, out var participants))
                             {
-                                if (allAssignedUsers.TryGetValue(task.Id, out var users))
-                                    task.AssignedUsers = users;
-                                else
-                                    task.AssignedUsers = new List<UserResponseDto>();
-
-                                if (allTaskClients.TryGetValue(task.Id, out var clientIds))
-                                    task.ClientIds = clientIds;
-                                else
-                                    task.ClientIds = new List<int>();
-
-                                if (allTaskProjects.TryGetValue(task.Id, out var projectIds))
-                                    task.ProjectIds = projectIds;
-                                else
-                                    task.ProjectIds = new List<int>();
-
-                                if (discussionParticipants.TryGetValue(discussionId, out var participants))
+                                foreach (var participant in participants)
                                 {
-                                    foreach (var participant in participants)
+                                    if (!task.AssignedUsers.Any(u => u.KullaniciID == participant.KullaniciID))
                                     {
-                                        if (!task.AssignedUsers.Any(u => u.KullaniciID == participant.KullaniciID))
-                                        {
-                                            task.AssignedUsers.Add(participant);
-                                        }
+                                        task.AssignedUsers.Add(participant);
                                     }
                                 }
                             }
                         }
                     }
+                }
 
-                    var documents = new List<ChatDocumentDto>();
-                    string documentQuery = @"
+                var documents = new List<ChatDocumentDto>();
+                string documentQuery = @"
                     SELECT Id, FileName, FileReference as FilePath, FileSize, CreatedAt, SenderId, MimeType
                     FROM ChatMessages
                     WHERE DiscussionId = @discussionId 
@@ -2872,29 +2926,29 @@ namespace crmApi.Controllers
                     AND FileName IS NOT NULL
                     ORDER BY CreatedAt DESC";
 
-                    using (var docCommand = new MySqlCommand(documentQuery, connection))
+                using (var docCommand = new MySqlCommand(documentQuery, connection))
+                {
+                    docCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                    using (var docReader = await docCommand.ExecuteReaderAsync())
                     {
-                        docCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                        using (var docReader = await docCommand.ExecuteReaderAsync())
+                        while (await docReader.ReadAsync())
                         {
-                            while (await docReader.ReadAsync())
+                            documents.Add(new ChatDocumentDto
                             {
-                                documents.Add(new ChatDocumentDto
-                                {
-                                    Id = (int)docReader["Id"],
-                                    FileName = docReader["FileName"].ToString(),
-                                    FilePath = docReader["FilePath"] as string,
-                                    FileSize = docReader["FileSize"] == DBNull.Value ? 0 : (long)docReader["FileSize"],
-                                    UploadedAt = (DateTime)docReader["CreatedAt"],
-                                    UploadedByUserId = (int)docReader["SenderId"],
-                                    ContentType = docReader["MimeType"] as string
-                                });
-                            }
+                                Id = (int)docReader["Id"],
+                                FileName = docReader["FileName"].ToString(),
+                                FilePath = docReader["FilePath"] as string,
+                                FileSize = docReader["FileSize"] == DBNull.Value ? 0 : (long)docReader["FileSize"],
+                                UploadedAt = (DateTime)docReader["CreatedAt"],
+                                UploadedByUserId = (int)docReader["SenderId"],
+                                ContentType = docReader["MimeType"] as string
+                            });
                         }
                     }
+                }
 
-                    var voiceRecords = new List<ChatVoiceRecordDto>();
-                    string voiceQuery = @"
+                var voiceRecords = new List<ChatVoiceRecordDto>();
+                string voiceQuery = @"
                     SELECT Id, FileName, FileReference as FilePath, Duration, CreatedAt, SenderId, FileSize
                     FROM ChatMessages
                     WHERE DiscussionId = @discussionId 
@@ -2903,41 +2957,41 @@ namespace crmApi.Controllers
                     AND FileName IS NOT NULL
                     ORDER BY CreatedAt DESC";
 
-                    using (var voiceCommand = new MySqlCommand(voiceQuery, connection))
+                using (var voiceCommand = new MySqlCommand(voiceQuery, connection))
+                {
+                    voiceCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                    using (var voiceReader = await voiceCommand.ExecuteReaderAsync())
                     {
-                        voiceCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                        using (var voiceReader = await voiceCommand.ExecuteReaderAsync())
+                        while (await voiceReader.ReadAsync())
                         {
-                            while (await voiceReader.ReadAsync())
+                            voiceRecords.Add(new ChatVoiceRecordDto
                             {
-                                voiceRecords.Add(new ChatVoiceRecordDto
-                                {
-                                    Id = (int)voiceReader["Id"],
-                                    FileName = voiceReader["FileName"].ToString(),
-                                    FilePath = voiceReader["FilePath"] as string,
-                                    Duration = voiceReader["Duration"] == DBNull.Value ? null : (double?)voiceReader["Duration"],
-                                    RecordedAt = (DateTime)voiceReader["CreatedAt"],
-                                    RecordedByUserId = (int)voiceReader["SenderId"],
-                                    FileSize = voiceReader["FileSize"] == DBNull.Value ? null : (long?)voiceReader["FileSize"]
-                                });
-                            }
+                                Id = (int)voiceReader["Id"],
+                                FileName = voiceReader["FileName"].ToString(),
+                                FilePath = voiceReader["FilePath"] as string,
+                                Duration = voiceReader["Duration"] == DBNull.Value ? null : (double?)voiceReader["Duration"],
+                                RecordedAt = (DateTime)voiceReader["CreatedAt"],
+                                RecordedByUserId = (int)voiceReader["SenderId"],
+                                FileSize = voiceReader["FileSize"] == DBNull.Value ? null : (long?)voiceReader["FileSize"]
+                            });
                         }
                     }
-
-                    var response = new DiscussionTasksAndMediaResponseDto
-                    {
-                        DiscussionId = discussionId,
-                        Tasks = tasks,
-                        Documents = documents,
-                        VoiceRecords = voiceRecords
-                    };
-
-                    return Ok(response);
                 }
-                catch (Exception ex)
+
+                var response = new DiscussionTasksAndMediaResponseDto
                 {
-                    return StatusCode(500, new { message = "Tartışma görevleri ve medya alınırken hata oluştu", error = ex.Message });
-                }
+                    DiscussionId = discussionId,
+                    Tasks = tasks,
+                    Documents = documents,
+                    VoiceRecords = voiceRecords
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Tartışma görevleri ve medya alınırken hata oluştu", error = ex.Message });
+            }
         }
 
         [HttpPost("discussions/{discussionId}/create-task-with-message")]
@@ -2966,12 +3020,11 @@ namespace crmApi.Controllers
                                                     createTaskMessage.EstimatedTime?.ToString() ?? (object)DBNull.Value);
                 taskCommand.Parameters.AddWithValue("@SortOrder", createTaskMessage.SortOrder ?? 0);
                 taskCommand.Parameters.AddWithValue("@CreatedByUserId", createTaskMessage.SenderId);
-                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                taskCommand.Parameters.AddWithValue("@CreatedAt", DateTime.Now);
 
                 var taskId = Convert.ToInt32(await taskCommand.ExecuteScalarAsync());
                 _logger.LogInformation($"Task created with ID: {taskId}");
 
-                // Get discussion participants (receiver IDs) to automatically assign them
                 var discussionParticipants = new List<int>();
                 string participantQuery = @"
             SELECT DISTINCT ReceiverId
@@ -2989,7 +3042,6 @@ namespace crmApi.Controllers
                 }
                 participantReader.Close();
 
-                // Combine manually assigned users with discussion participants
                 var allAssignedUserIds = new List<int>();
                 if (createTaskMessage.AssignedUserIds?.Any() == true)
                 {
@@ -2998,7 +3050,6 @@ namespace crmApi.Controllers
                 allAssignedUserIds.AddRange(discussionParticipants);
                 allAssignedUserIds = allAssignedUserIds.Distinct().ToList();
 
-                // Assign users to task
                 if (allAssignedUserIds.Any())
                 {
                     string assignQuery = "INSERT INTO TaskAssignments (TaskId, UserId, AssignedAt) VALUES ";
@@ -3007,7 +3058,7 @@ namespace crmApi.Controllers
 
                     using var assignCommand = new MySqlCommand(assignQuery, connection, transaction);
                     assignCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    assignCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < allAssignedUserIds.Count; i++)
                     {
                         assignCommand.Parameters.AddWithValue($"@UserId{i}", allAssignedUserIds[i]);
@@ -3015,7 +3066,6 @@ namespace crmApi.Controllers
                     await assignCommand.ExecuteNonQueryAsync();
                 }
 
-                // Assign clients to task
                 if (createTaskMessage.ClientIds?.Any() == true)
                 {
                     string clientQuery = "INSERT INTO TaskClients (TaskId, ClientId, AssignedAt) VALUES ";
@@ -3024,7 +3074,7 @@ namespace crmApi.Controllers
 
                     using var clientCommand = new MySqlCommand(clientQuery, connection, transaction);
                     clientCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    clientCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    clientCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < createTaskMessage.ClientIds.Count; i++)
                     {
                         clientCommand.Parameters.AddWithValue($"@ClientId{i}", createTaskMessage.ClientIds[i]);
@@ -3032,7 +3082,6 @@ namespace crmApi.Controllers
                     await clientCommand.ExecuteNonQueryAsync();
                 }
 
-                // Assign projects to task
                 if (createTaskMessage.ProjectIds?.Any() == true)
                 {
                     string projectQuery = "INSERT INTO TaskProjects (TaskId, ProjectId, AssignedAt) VALUES ";
@@ -3041,7 +3090,7 @@ namespace crmApi.Controllers
 
                     using var projectCommand = new MySqlCommand(projectQuery, connection, transaction);
                     projectCommand.Parameters.AddWithValue("@TaskId", taskId);
-                    projectCommand.Parameters.AddWithValue("@AssignedAt", DateTime.UtcNow);
+                    projectCommand.Parameters.AddWithValue("@AssignedAt", DateTime.Now);
                     for (int i = 0; i < createTaskMessage.ProjectIds.Count; i++)
                     {
                         projectCommand.Parameters.AddWithValue($"@ProjectId{i}", createTaskMessage.ProjectIds[i]);
@@ -3060,7 +3109,7 @@ namespace crmApi.Controllers
                 messageCommand.Parameters.AddWithValue("@content", createTaskMessage.Content);
                 messageCommand.Parameters.AddWithValue("@messageType", createTaskMessage.MessageType);
                 messageCommand.Parameters.AddWithValue("@taskId", taskId);
-                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                messageCommand.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                 var messageId = Convert.ToInt32(await messageCommand.ExecuteScalarAsync());
                 _logger.LogInformation($"Task message created with ID: {messageId}");
@@ -3085,7 +3134,7 @@ namespace crmApi.Controllers
                     ClientIds = createTaskMessage.ClientIds ?? new List<int>(),
                     ProjectIds = createTaskMessage.ProjectIds ?? new List<int>(),
                     SortOrder = createTaskMessage.SortOrder ?? 0,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
@@ -3094,6 +3143,108 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error creating task with message", error = ex.Message });
             }
         }
+
+        [HttpPut("discussions/{discussionId}/mark-all-seen")]
+        public async Task<ActionResult> MarkDiscussionMessagesAsSeen(int discussionId, [FromQuery] int userId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+                string query = @"
+            UPDATE ChatMessages
+            SET IsSeen = true, SeenAt = @seenAt
+            WHERE DiscussionId = @discussionId
+            AND ReceiverId = @userId
+            AND IsSeen = false";
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+                command.Parameters.AddWithValue("@userId", userId);
+                command.Parameters.AddWithValue("@seenAt", DateTime.Now);
+                int rowsAffected = await command.ExecuteNonQueryAsync();
+                return Ok(new
+                {
+                    message = "All discussion messages marked as seen",
+                    messagesUpdated = rowsAffected
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error marking discussion messages as seen");
+                return StatusCode(500, new
+                {
+                    message = "Error marking discussion messages as seen",
+                    error = ex.Message
+                });
+            }
+        }
+
+        [HttpPut("messages/{messageId}/mark-seen")]
+        public async Task<ActionResult> MarkMessageAsSeen(int messageId, [FromQuery] int userId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+                    UPDATE ChatMessages 
+                    SET IsSeen = true, SeenAt = @seenAt 
+                    WHERE Id = @messageId 
+                    AND ReceiverId = @userId 
+                    AND IsSeen = false";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@messageId", messageId);
+                command.Parameters.AddWithValue("@userId", userId);
+                command.Parameters.AddWithValue("@seenAt", DateTime.Now);
+
+                int rowsAffected = await command.ExecuteNonQueryAsync();
+
+                if (rowsAffected == 0)
+                {
+                    return BadRequest(new { message = "Message not found or already seen" });
+                }
+
+                return Ok(new { message = "Message marked as seen" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error marking message as seen");
+                return StatusCode(500, new { message = "Error marking message as seen", error = ex.Message });
+            }
+        }
+
+        [HttpGet("discussions/{discussionId}/unreadcount")]
+        public async Task<ActionResult<int>> GetUnreadMessageCount(int discussionId, [FromQuery] int userId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+            SELECT COUNT(*) 
+            FROM ChatMessages 
+            WHERE DiscussionId = @discussionId 
+            AND ReceiverId = @userId 
+            AND IsSeen = false";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+                command.Parameters.AddWithValue("@userId", userId);
+
+                var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+
+                return Ok(count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting unread message count");
+                return StatusCode(500, new { message = "Error getting unread message count", error = ex.Message });
+            }
+        }
+
     }
 
     public class EditMessageRequest
