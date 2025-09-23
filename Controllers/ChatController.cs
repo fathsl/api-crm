@@ -428,100 +428,29 @@ namespace crmApi.Controllers
         }
 
         // ✅ Get messages for a discussion
-        [HttpGet("discussions/{discussionId}/messages")]
-        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int? userId = null)
+         [HttpGet("discussions/{discussionId}/messages")]
+        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId)
         {
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                DateTime? userAssignmentTime = null;
-                bool isDiscussionCreator = false;
-
-                if (userId.HasValue)
-                {
-                    string creatorQuery = @"
-            SELECT CreatedByUserId FROM Discussions 
-            WHERE Id = @discussionId";
-
-                    using var creatorCommand = new MySqlCommand(creatorQuery, connection);
-                    creatorCommand.Parameters.AddWithValue("@discussionId", discussionId);
-
-                    var creatorResult = await creatorCommand.ExecuteScalarAsync();
-                    if (creatorResult != null && creatorResult != DBNull.Value)
-                    {
-                        int creatorId = Convert.ToInt32(creatorResult);
-                        isDiscussionCreator = (userId.Value == creatorId);
-                        _logger.LogInformation("User {UserId} is creator: {IsCreator} for discussion {DiscussionId}",
-                            userId.Value, isDiscussionCreator, discussionId);
-                    }
-
-                    if (!isDiscussionCreator)
-                    {
-                        string assignmentQuery = @"
-                SELECT AssignedAt FROM DiscussionAssignedUsers 
-                WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
-
-                        using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
-                        assignmentCommand.Parameters.AddWithValue("@discussionId", discussionId);
-                        assignmentCommand.Parameters.AddWithValue("@userId", userId.Value);
-
-                        var assignmentResult = await assignmentCommand.ExecuteScalarAsync();
-                        if (assignmentResult != null && assignmentResult != DBNull.Value)
-                        {
-                            userAssignmentTime = Convert.ToDateTime(assignmentResult);
-                            _logger.LogInformation("User {UserId} assigned to discussion {DiscussionId} at {AssignmentTime}",
-                                userId.Value, discussionId, userAssignmentTime);
-                        }
-                        else
-                        {
-                            _logger.LogInformation("User {UserId} is NOT assigned to discussion {DiscussionId}",
-                                userId.Value, discussionId);
-                        }
-                    }
-                }
-
-                string whereClause = "WHERE m.DiscussionId = @discussionId";
-                string taskWhereClause = "";
-
-                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
-                {
-                    whereClause += " AND m.CreatedAt >= @assignmentTime";
-                    // Add task creation time filter - this was missing in the original code
-                    taskWhereClause = " AND (t.Id IS NULL OR t.CreatedAt >= @assignmentTime)";
-                    _logger.LogInformation("Applying message and task filter: CreatedAt >= {AssignmentTime}", userAssignmentTime);
-                }
-                else if (userId.HasValue && !isDiscussionCreator && !userAssignmentTime.HasValue)
-                {
-                    _logger.LogInformation("User {UserId} is not creator and not assigned to discussion {DiscussionId}, returning empty message list",
-                        userId.Value, discussionId);
-                    return Ok(new List<MessageResponse>());
-                }
-
-                string query = $@"
-            SELECT 
-                m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
-                m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
-                m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
-                t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime, t.CreatedAt AS TaskCreatedAt,
-                d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey,
-                u1.Ad AS SenderName, u2.Ad AS ReceiverName
-            FROM ChatMessages m
-            LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
-            LEFT JOIN Tasks t ON m.TaskId = t.Id{taskWhereClause}
-            LEFT JOIN KullaniciBilgileri u1 ON m.SenderId = u1.KullaniciID
-            LEFT JOIN KullaniciBilgileri u2 ON m.ReceiverId = u2.KullaniciID
-            {whereClause}
-            ORDER BY m.CreatedAt ASC";
+                string query = @"
+                    SELECT 
+                        m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
+                        m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
+                        m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
+                        t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
+                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize,d.IDriveUrl,d.BucketName,d.FileKey
+                    FROM ChatMessages m
+                    LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
+                    LEFT JOIN Tasks t ON m.TaskId = t.Id
+                    WHERE m.DiscussionId = @discussionId
+                    ORDER BY m.CreatedAt ASC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
-
-                if (userId.HasValue && !isDiscussionCreator && userAssignmentTime.HasValue)
-                {
-                    command.Parameters.AddWithValue("@assignmentTime", userAssignmentTime.Value);
-                }
 
                 var messages = new List<MessageResponse>();
                 using var reader = await command.ExecuteReaderAsync();
@@ -531,13 +460,6 @@ namespace crmApi.Controllers
                     var fileReference = reader.IsDBNull(reader.GetOrdinal("FileReference")) ? null : reader["FileReference"].ToString();
                     var duration = reader.IsDBNull(reader.GetOrdinal("Duration")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("Duration"));
                     var taskId = reader.IsDBNull(reader.GetOrdinal("TaskId")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("TaskId"));
-
-                    if (Convert.ToByte(reader["MessageType"]) == 3 && taskId.HasValue && reader.IsDBNull(reader.GetOrdinal("TaskTitle")))
-                    {
-                        _logger.LogInformation("Skipping task message {MessageId} because task {TaskId} was created before user assignment",
-                            reader["Id"], taskId);
-                        continue;
-                    }
 
                     var message = new MessageResponse
                     {
@@ -563,11 +485,9 @@ namespace crmApi.Controllers
                         DueDate = reader.IsDBNull(reader.GetOrdinal("DueDate")) ? null : reader.GetDateTime(reader.GetOrdinal("DueDate")),
                         EstimatedTime = reader.IsDBNull(reader.GetOrdinal("EstimatedTime")) ? null : reader["EstimatedTime"].ToString(),
                         AssignedUserIds = new List<int>(),
-                        IDriveUrl = reader["IDriveUrl"]?.ToString(),
+                        IDriveUrl = reader["IdriveUrl"]?.ToString(),
                         BucketName = reader["BucketName"]?.ToString(),
-                        FileKey = reader["FileKey"]?.ToString(),
-                        SenderName = reader.IsDBNull(reader.GetOrdinal("SenderName")) ? null : reader["SenderName"].ToString(),
-                        ReceiverName = reader.IsDBNull(reader.GetOrdinal("ReceiverName")) ? null : reader["ReceiverName"].ToString()
+                        FileKey = reader["FileKey"]?.ToString()
                     };
 
                     messages.Add(message);
@@ -575,27 +495,20 @@ namespace crmApi.Controllers
 
                 reader.Close();
 
-                _logger.LogInformation("Found {MessageCount} messages for discussion {DiscussionId}, user {UserId}",
-                    messages.Count, discussionId, userId);
-
-                var taskMessages = messages.Where(m => m.MessageType == 3 && m.TaskId.HasValue).ToList();
-                _logger.LogInformation("Found {TaskMessageCount} task messages", taskMessages.Count);
-
-                foreach (var message in taskMessages)
+                foreach (var message in messages.Where(m => m.TaskId.HasValue))
                 {
                     string assignQuery = @"
-            SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
-
+                        SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
                     using var assignCommand = new MySqlCommand(assignQuery, connection);
                     assignCommand.Parameters.AddWithValue("@taskId", message.TaskId);
-
                     using var assignReader = await assignCommand.ExecuteReaderAsync();
                     while (await assignReader.ReadAsync())
                     {
                         message.AssignedUserIds.Add(assignReader.GetInt32(assignReader.GetOrdinal("UserId")));
                     }
-                    assignReader.Close();
                 }
+
+                var voiceMessages = messages.Where(m => m.MessageType == (byte)MessageType.Voice).ToList();
 
                 return Ok(messages);
             }
