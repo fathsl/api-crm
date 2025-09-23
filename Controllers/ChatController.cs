@@ -428,13 +428,48 @@ namespace crmApi.Controllers
         }
 
         // ✅ Get messages for a discussion
-         [HttpGet("discussions/{discussionId}/messages")]
-        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId)
+        [HttpGet("discussions/{discussionId}/messages")]
+        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int userId)
         {
             try
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
+
+                string assignmentQuery = @"
+                        SELECT AssignedAt FROM DiscussionAssignedUsers 
+                        WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+
+                DateTime? userAssignedAt = null;
+                using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
+                assignmentCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                assignmentCommand.Parameters.AddWithValue("@userId", userId);
+
+                var assignmentResult = await assignmentCommand.ExecuteScalarAsync();
+                if (assignmentResult != null)
+                {
+                    userAssignedAt = Convert.ToDateTime(assignmentResult);
+                }
+
+                string permissionQuery = @"
+                        SELECT d.CreatedByUserId, kb.YetkiTuru 
+                        FROM Discussions d 
+                        LEFT JOIN KullaniciBilgileri kb ON kb.KullaniciID = @userId 
+                        WHERE d.Id = @discussionId";
+
+                using var permissionCommand = new MySqlCommand(permissionQuery, connection);
+                permissionCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                permissionCommand.Parameters.AddWithValue("@userId", userId);
+
+                bool isCreatorOrAdmin = false;
+                using var permissionReader = await permissionCommand.ExecuteReaderAsync();
+                if (await permissionReader.ReadAsync())
+                {
+                    var creatorId = Convert.ToInt32(permissionReader["CreatedByUserId"]);
+                    var userRole = permissionReader["YetkiTuru"]?.ToString() ?? "";
+                    isCreatorOrAdmin = creatorId == userId || userRole == "Yonetici";
+                }
+                permissionReader.Close();
 
                 string query = @"
                     SELECT 
@@ -442,15 +477,25 @@ namespace crmApi.Controllers
                         m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
                         m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
                         t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
-                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize,d.IDriveUrl,d.BucketName,d.FileKey
+                        d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey
                     FROM ChatMessages m
                     LEFT JOIN MessageDocuments d ON m.Id = d.MessageId
                     LEFT JOIN Tasks t ON m.TaskId = t.Id
-                    WHERE m.DiscussionId = @discussionId
-                    ORDER BY m.CreatedAt ASC";
+                    WHERE m.DiscussionId = @discussionId";
+
+                if (userAssignedAt.HasValue && !isCreatorOrAdmin)
+                {
+                    query += " AND m.CreatedAt >= @assignedAt";
+                }
+
+                query += " ORDER BY m.CreatedAt ASC";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
+                if (userAssignedAt.HasValue && !isCreatorOrAdmin)
+                {
+                    command.Parameters.AddWithValue("@assignedAt", userAssignedAt.Value);
+                }
 
                 var messages = new List<MessageResponse>();
                 using var reader = await command.ExecuteReaderAsync();
@@ -485,7 +530,7 @@ namespace crmApi.Controllers
                         DueDate = reader.IsDBNull(reader.GetOrdinal("DueDate")) ? null : reader.GetDateTime(reader.GetOrdinal("DueDate")),
                         EstimatedTime = reader.IsDBNull(reader.GetOrdinal("EstimatedTime")) ? null : reader["EstimatedTime"].ToString(),
                         AssignedUserIds = new List<int>(),
-                        IDriveUrl = reader["IdriveUrl"]?.ToString(),
+                        IDriveUrl = reader["IDriveUrl"]?.ToString(),
                         BucketName = reader["BucketName"]?.ToString(),
                         FileKey = reader["FileKey"]?.ToString()
                     };
@@ -498,7 +543,7 @@ namespace crmApi.Controllers
                 foreach (var message in messages.Where(m => m.TaskId.HasValue))
                 {
                     string assignQuery = @"
-                        SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
+                SELECT UserId FROM TaskAssignments WHERE TaskId = @taskId";
                     using var assignCommand = new MySqlCommand(assignQuery, connection);
                     assignCommand.Parameters.AddWithValue("@taskId", message.TaskId);
                     using var assignReader = await assignCommand.ExecuteReaderAsync();
@@ -908,7 +953,6 @@ namespace crmApi.Controllers
                 return "";
             }
         }
-
 
         [HttpPost("messages/send-with-file")]
         public async Task<IActionResult> SendMessageWithFile([FromForm] SendMessageWithFileRequest request, IFormFile file)
