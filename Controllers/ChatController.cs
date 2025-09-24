@@ -429,7 +429,7 @@ namespace crmApi.Controllers
 
         // ✅ Get messages for a discussion
         [HttpGet("discussions/{discussionId}/messages")]
-        public async Task<ActionResult<List<MessageResponse>>> GetMessages(int discussionId, [FromQuery] int userId)
+        public async Task<ActionResult<object>> GetMessages(int discussionId, [FromQuery] int userId)
         {
             try
             {
@@ -437,8 +437,8 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string assignmentQuery = @"
-                        SELECT AssignedAt FROM DiscussionAssignedUsers 
-                        WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
+                    SELECT AssignedAt FROM DiscussionAssignedUsers 
+                    WHERE DiscussionId = @discussionId AND AssignedUserId = @userId";
 
                 DateTime? userAssignedAt = null;
                 using var assignmentCommand = new MySqlCommand(assignmentQuery, connection);
@@ -475,6 +475,7 @@ namespace crmApi.Controllers
                     SELECT 
                         m.Id, m.DiscussionId, m.SenderId, m.ReceiverId, m.Content, 
                         m.MessageType, m.IsEdited, m.EditedAt, m.CreatedAt, m.FileReference, m.Duration,
+                        m.IsSeen, m.SeenAt,
                         m.TaskId, t.Title AS TaskTitle, t.Description AS TaskDescription, t.Status AS TaskStatus,
                         t.Priority AS TaskPriority, t.DueDate, t.EstimatedTime,
                         d.FileName, d.OriginalFileName, d.MimeType, d.FileSize, d.IDriveUrl, d.BucketName, d.FileKey
@@ -517,6 +518,8 @@ namespace crmApi.Controllers
                         IsEdited = Convert.ToBoolean(reader["IsEdited"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
                         EditedAt = reader.IsDBNull(reader.GetOrdinal("EditedAt")) ? null : reader.GetDateTime(reader.GetOrdinal("EditedAt")),
+                        IsSeen = Convert.ToBoolean(reader["IsSeen"]),
+                        SeenAt = reader.IsDBNull(reader.GetOrdinal("SeenAt")) ? null : reader.GetDateTime(reader.GetOrdinal("SeenAt")),
                         FileReference = fileReference,
                         Duration = duration,
                         FileName = reader.IsDBNull(reader.GetOrdinal("OriginalFileName")) ? null : reader["OriginalFileName"].ToString(),
@@ -553,9 +556,18 @@ namespace crmApi.Controllers
                     }
                 }
 
+                int unreadCount = messages.Count(m => m.ReceiverId == userId && m.IsSeen == false);
+
+                int unseenCount = messages.Count(m => m.SenderId == userId && !(m.IsSeen ?? false));
+
                 var voiceMessages = messages.Where(m => m.MessageType == (byte)MessageType.Voice).ToList();
 
-                return Ok(messages);
+                return Ok(new
+                {
+                    messages = messages,
+                    unreadCount = unreadCount,
+                    unseenCount = unseenCount
+                });
             }
             catch (Exception ex)
             {
@@ -563,9 +575,6 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error fetching messages", error = ex.Message });
             }
         }
-
-
-
 
         [HttpPost("discussions")]
         public async Task<ActionResult<DiscussionResponse>> CreateDiscussion([FromBody] CreateDiscussionRequest request)
@@ -3111,26 +3120,65 @@ namespace crmApi.Controllers
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-                string query = @"
-            UPDATE ChatMessages
-            SET IsSeen = true, SeenAt = @seenAt
-            WHERE DiscussionId = @discussionId
-            AND ReceiverId = @userId
-            AND IsSeen = false";
-                using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@discussionId", discussionId);
-                command.Parameters.AddWithValue("@userId", userId);
-                command.Parameters.AddWithValue("@seenAt", DateTime.Now);
-                int rowsAffected = await command.ExecuteNonQueryAsync();
+
+                string checkQuery = @"
+                        SELECT COUNT(*) 
+                        FROM ChatMessages 
+                        WHERE DiscussionId = @discussionId 
+                        AND ReceiverId = @userId 
+                        AND IsSeen = 0";
+
+                using var checkCommand = new MySqlCommand(checkQuery, connection);
+                checkCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                checkCommand.Parameters.AddWithValue("@userId", userId);
+
+                var unseenCount = Convert.ToInt32(await checkCommand.ExecuteScalarAsync());
+
+                if (unseenCount == 0)
+                {
+                    return Ok(new
+                    {
+                        message = "No unseen messages to update",
+                        messagesUpdated = 0,
+                        hasUpdates = false
+                    });
+                }
+
+                string updateQuery = @"
+                    UPDATE ChatMessages
+                    SET IsSeen = 1, SeenAt = @seenAt
+                    WHERE DiscussionId = @discussionId
+                    AND ReceiverId = @userId
+                    AND IsSeen = 0";
+
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@discussionId", discussionId);
+                updateCommand.Parameters.AddWithValue("@userId", userId);
+                updateCommand.Parameters.AddWithValue("@seenAt", DateTime.Now);
+
+                int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+
+                _logger.LogInformation($"Marked {rowsAffected} messages as seen for discussion {discussionId} and user {userId}");
+
                 return Ok(new
                 {
-                    message = "All discussion messages marked as seen",
-                    messagesUpdated = rowsAffected
+                    message = "Discussion messages marked as seen successfully",
+                    messagesUpdated = rowsAffected,
+                    hasUpdates = true
+                });
+            }
+            catch (MySqlException mysqlEx)
+            {
+                _logger.LogError(mysqlEx, $"MySQL error marking discussion messages as seen. Discussion: {discussionId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Database error occurred while marking messages as seen",
+                    error = mysqlEx.Message
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error marking discussion messages as seen");
+                _logger.LogError(ex, $"Error marking discussion messages as seen. Discussion: {discussionId}, User: {userId}");
                 return StatusCode(500, new
                 {
                     message = "Error marking discussion messages as seen",
@@ -3147,31 +3195,77 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"
+                string checkQuery = @"
+                    SELECT COUNT(*) 
+                    FROM ChatMessages 
+                    WHERE Id = @messageId 
+                    AND ReceiverId = @userId";
+
+                using var checkCommand = new MySqlCommand(checkQuery, connection);
+                checkCommand.Parameters.AddWithValue("@messageId", messageId);
+                checkCommand.Parameters.AddWithValue("@userId", userId);
+
+                var messageExists = Convert.ToInt32(await checkCommand.ExecuteScalarAsync()) > 0;
+
+                if (!messageExists)
+                {
+                    return NotFound(new { message = "Message not found or user not authorized" });
+                }
+
+                string updateQuery = @"
                     UPDATE ChatMessages 
-                    SET IsSeen = true, SeenAt = @seenAt 
+                    SET IsSeen = 1, SeenAt = @seenAt 
                     WHERE Id = @messageId 
                     AND ReceiverId = @userId 
-                    AND IsSeen = false";
+                    AND IsSeen = 0";
 
-                using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@messageId", messageId);
-                command.Parameters.AddWithValue("@userId", userId);
-                command.Parameters.AddWithValue("@seenAt", DateTime.Now);
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@messageId", messageId);
+                updateCommand.Parameters.AddWithValue("@userId", userId);
+                updateCommand.Parameters.AddWithValue("@seenAt", DateTime.Now);
 
-                int rowsAffected = await command.ExecuteNonQueryAsync();
+                int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
 
                 if (rowsAffected == 0)
                 {
-                    return BadRequest(new { message = "Message not found or already seen" });
+                    string alreadySeenQuery = @"
+                SELECT IsSeen 
+                FROM ChatMessages 
+                WHERE Id = @messageId 
+                AND ReceiverId = @userId";
+
+                    using var seenCheckCommand = new MySqlCommand(alreadySeenQuery, connection);
+                    seenCheckCommand.Parameters.AddWithValue("@messageId", messageId);
+                    seenCheckCommand.Parameters.AddWithValue("@userId", userId);
+
+                    var result = await seenCheckCommand.ExecuteScalarAsync();
+                    if (result != null && Convert.ToBoolean(result))
+                    {
+                        return Ok(new { message = "Message was already marked as seen" });
+                    }
+
+                    return BadRequest(new { message = "Message could not be updated" });
                 }
 
-                return Ok(new { message = "Message marked as seen" });
+                return Ok(new { message = "Message marked as seen successfully" });
+            }
+            catch (MySqlException mysqlEx)
+            {
+                _logger.LogError(mysqlEx, $"MySQL error marking message as seen. Message: {messageId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Database error occurred while marking message as seen",
+                    error = mysqlEx.Message
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error marking message as seen");
-                return StatusCode(500, new { message = "Error marking message as seen", error = ex.Message });
+                _logger.LogError(ex, $"Error marking message as seen. Message: {messageId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Error marking message as seen",
+                    error = ex.Message
+                });
             }
         }
 
@@ -3182,28 +3276,77 @@ namespace crmApi.Controllers
             {
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
-
                 string query = @"
-            SELECT COUNT(*) 
-            FROM ChatMessages 
-            WHERE DiscussionId = @discussionId 
-            AND ReceiverId = @userId 
-            AND IsSeen = false";
-
+            SELECT COUNT(*)
+            FROM ChatMessages
+            WHERE DiscussionId = @discussionId
+            AND ReceiverId = @userId
+            AND IsSeen = 0";
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@discussionId", discussionId);
                 command.Parameters.AddWithValue("@userId", userId);
-
                 var count = Convert.ToInt32(await command.ExecuteScalarAsync());
-
                 return Ok(count);
+            }
+            catch (MySqlException mysqlEx)
+            {
+                _logger.LogError(mysqlEx, $"MySQL error getting unread message count. Discussion: {discussionId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Database error occurred while getting unread count",
+                    error = mysqlEx.Message
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting unread message count");
-                return StatusCode(500, new { message = "Error getting unread message count", error = ex.Message });
+                _logger.LogError(ex, $"Error getting unread message count. Discussion: {discussionId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Error getting unread message count",
+                    error = ex.Message
+                });
             }
         }
+
+        [HttpGet("discussions/{discussionId}/unseencount")]
+        public async Task<ActionResult<int>> GetUnseenMessageCount(int discussionId, [FromQuery] int userId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+                string query = @"
+            SELECT COUNT(*)
+            FROM ChatMessages
+            WHERE DiscussionId = @discussionId
+            AND SenderId = @userId
+            AND IsSeen = 0";
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+                command.Parameters.AddWithValue("@userId", userId);
+                var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+                return Ok(count);
+            }
+            catch (MySqlException mysqlEx)
+            {
+                _logger.LogError(mysqlEx, $"MySQL error getting unseen message count. Discussion: {discussionId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Database error occurred while getting unseen count",
+                    error = mysqlEx.Message
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error getting unseen message count. Discussion: {discussionId}, User: {userId}");
+                return StatusCode(500, new
+                {
+                    message = "Error getting unseen message count",
+                    error = ex.Message
+                });
+            }
+        }
+
 
     }
 
