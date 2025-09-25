@@ -42,7 +42,7 @@ namespace crmApi.Controllers
                 string userRole = roleResult?.ToString() ?? "";
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, d.ClientId,
                         COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                         COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                         lt.Status as LastTaskStatus,
@@ -56,6 +56,7 @@ namespace crmApi.Controllers
                     LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
                     LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
                     LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                    LEFT JOIN Clients c ON d.ClientId = c.Id
                     LEFT JOIN (
                         SELECT cm1.DiscussionId, t1.Status
                         FROM ChatMessages cm1
@@ -111,6 +112,7 @@ namespace crmApi.Controllers
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
                         Status = discussionStatus,
+                        ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -146,7 +148,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -160,6 +162,7 @@ namespace crmApi.Controllers
                 LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
                 LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
                 LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                LEFT JOIN Clients c ON d.ClientId = c.Id
                 LEFT JOIN (
                     SELECT cm1.DiscussionId, t1.Status
                     FROM ChatMessages cm1
@@ -225,6 +228,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -237,7 +241,6 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error fetching discussions", error = ex.Message });
             }
         }
-
 
         [HttpGet("discussions/admin/{currentUserId}/{selectedUserId}")]
         public async Task<ActionResult<List<DiscussionResponse>>> GetAdminUserDiscussions(int currentUserId, int selectedUserId)
@@ -261,7 +264,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -275,6 +278,7 @@ namespace crmApi.Controllers
                     LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
                     LEFT JOIN DiscussionAssignedUsers dau ON d.Id = dau.DiscussionId
                     LEFT JOIN DiscussionParticipants dp ON d.Id = dp.DiscussionId
+                    LEFT JOIN Clients c ON d.ClientId = c.Id
                     LEFT JOIN (
                         SELECT cm1.DiscussionId, t1.Status
                         FROM ChatMessages cm1
@@ -330,6 +334,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -353,7 +358,7 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
                 COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                 COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                 lt.Status as LastTaskStatus,
@@ -365,6 +370,7 @@ namespace crmApi.Controllers
                 LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
                 LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
                 LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
+                LEFT JOIN Clients c ON d.ClientId = c.Id
                 LEFT JOIN (
                     SELECT cm1.DiscussionId, t1.Status
                     FROM ChatMessages cm1
@@ -414,6 +420,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -584,8 +591,8 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"INSERT INTO Discussions (Title, Description, Status, CreatedByUserId, SenderId, ReceiverId, CreatedAt)
-                 VALUES (@title, @description, @status, @createdByUserId, @senderId, @receiverId, @createdAt);
+                string query = @"INSERT INTO Discussions (Title, Description, Status, CreatedByUserId, SenderId, ReceiverId,ClientId,createdAt)
+                 VALUES (@title, @description, @status, @createdByUserId, @senderId, @receiverId ,@ClientId, @createdAt);
                  SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(query, connection);
@@ -595,6 +602,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@createdByUserId", request.CreatedByUserId);
                 command.Parameters.AddWithValue("@senderId", request.SenderId);
                 command.Parameters.AddWithValue("@receiverId", request.ReceiverId);
+                command.Parameters.AddWithValue("@ClientId", request.ClientId);
                 command.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                 _logger.LogInformation($"Creating discussion with Title: {request.Title}, Status: {request.Status}, SenderId: {request.SenderId}, ReceiverId: {request.ReceiverId}");
@@ -623,6 +631,7 @@ namespace crmApi.Controllers
                     CreatedByUserId = request.CreatedByUserId,
                     SenderId = request.SenderId,
                     ReceiverId = request.ReceiverId,
+                    ClientId = request.ClientId,
                     CreatedAt = DateTime.Now
                 });
             }
