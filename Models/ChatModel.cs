@@ -330,7 +330,7 @@ namespace crmApi.Models
         public int SenderId { get; set; }
         public int? ReceiverId { get; set; }
         public string Content { get; set; }
-        public int MessageType { get; set; }
+        public int MessageType { get; set; } = 4;
         public string? TaskTitle { get; set; }
         public string? TaskDescription { get; set; }
         public string TaskStatus { get; set; }
