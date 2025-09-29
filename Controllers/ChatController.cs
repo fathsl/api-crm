@@ -603,7 +603,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@senderId", request.SenderId);
                 command.Parameters.AddWithValue("@receiverId", request.ReceiverId);
                 command.Parameters.AddWithValue("@ClientId", request.ClientId);
-                command.Parameters.AddWithValue("@createdAt", DateTime.Now);
+                command.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
 
                 _logger.LogInformation($"Creating discussion with Title: {request.Title}, Status: {request.Status}, SenderId: {request.SenderId}, ReceiverId: {request.ReceiverId}");
 
@@ -617,7 +617,7 @@ namespace crmApi.Controllers
                     using var participantCommand = new MySqlCommand(participantQuery, connection);
                     participantCommand.Parameters.AddWithValue("@discussionId", discussionId);
                     participantCommand.Parameters.AddWithValue("@userId", userId);
-                    participantCommand.Parameters.AddWithValue("@joinedAt", DateTime.Now);
+                    participantCommand.Parameters.AddWithValue("@joinedAt", DateTime.UtcNow);
                     participantCommand.Parameters.AddWithValue("@createdByUserId", request.CreatedByUserId);
                     await participantCommand.ExecuteNonQueryAsync();
                 }
@@ -632,7 +632,7 @@ namespace crmApi.Controllers
                     SenderId = request.SenderId,
                     ReceiverId = request.ReceiverId,
                     ClientId = request.ClientId,
-                    CreatedAt = DateTime.Now
+                    CreatedAt = DateTime.UtcNow
                 });
             }
             catch (Exception ex)
@@ -978,7 +978,6 @@ namespace crmApi.Controllers
                 return "";
             }
         }
-
 
         [HttpPost("messages/send-with-file")]
         public async Task<IActionResult> SendMessageWithFile([FromForm] SendMessageWithFileRequest request, IFormFile file)
