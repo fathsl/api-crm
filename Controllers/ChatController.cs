@@ -8,6 +8,7 @@ using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
 using Dapper;
 using crmApi.Models.crmApi.Models;
+using System.Data;
 
 namespace crmApi.Controllers
 {
@@ -42,7 +43,7 @@ namespace crmApi.Controllers
                 string userRole = roleResult?.ToString() ?? "";
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, d.ClientId,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, d.ClientId,d.UpdatedAt,
                         COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                         COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                         lt.Status as LastTaskStatus,
@@ -106,6 +107,9 @@ namespace crmApi.Controllers
                         Description = reader["Description"].ToString() ?? "",
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                                                                        : (DateTime?)null,
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
                         SenderName = reader["SenderName"]?.ToString() ?? "",
@@ -148,7 +152,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.UpdatedAt,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -223,6 +227,9 @@ namespace crmApi.Controllers
                         Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                                                                        : (DateTime?)null,
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
                         SenderName = reader["SenderName"]?.ToString() ?? "",
@@ -264,7 +271,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,UpdatedAt,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -335,6 +342,9 @@ namespace crmApi.Controllers
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
                         ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                                                                        : (DateTime?)null,
                         LastTaskStatus = lastTaskStatus
                     });
                 }
@@ -358,7 +368,7 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.UpdatedAt,
                 COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                 COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                 lt.Status as LastTaskStatus,
@@ -415,6 +425,9 @@ namespace crmApi.Controllers
                         Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                                                                        : (DateTime?)null,
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
                         SenderName = reader["SenderName"]?.ToString() ?? "",
@@ -603,7 +616,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@senderId", request.SenderId);
                 command.Parameters.AddWithValue("@receiverId", request.ReceiverId);
                 command.Parameters.AddWithValue("@ClientId", request.ClientId);
-                command.Parameters.AddWithValue("@createdAt", DateTime.UtcNow);
+                command.Parameters.AddWithValue("@createdAt", DateTime.Now);
 
                 _logger.LogInformation($"Creating discussion with Title: {request.Title}, Status: {request.Status}, SenderId: {request.SenderId}, ReceiverId: {request.ReceiverId}");
 
@@ -617,7 +630,7 @@ namespace crmApi.Controllers
                     using var participantCommand = new MySqlCommand(participantQuery, connection);
                     participantCommand.Parameters.AddWithValue("@discussionId", discussionId);
                     participantCommand.Parameters.AddWithValue("@userId", userId);
-                    participantCommand.Parameters.AddWithValue("@joinedAt", DateTime.UtcNow);
+                    participantCommand.Parameters.AddWithValue("@joinedAt", DateTime.Now);
                     participantCommand.Parameters.AddWithValue("@createdByUserId", request.CreatedByUserId);
                     await participantCommand.ExecuteNonQueryAsync();
                 }
@@ -632,7 +645,7 @@ namespace crmApi.Controllers
                     SenderId = request.SenderId,
                     ReceiverId = request.ReceiverId,
                     ClientId = request.ClientId,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
@@ -650,26 +663,53 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string query = @"UPDATE Discussions 
-                        SET Status = @status, UpdatedByUserId = @updatedByUserId, UpdatedAt = @updatedAt
-                        WHERE Id = @discussionId";
+                string updateQuery = @"UPDATE Discussions 
+                SET Status = @status, 
+                    UpdatedByUserId = @updatedByUserId, 
+                    UpdatedAt = @updatedAt
+                WHERE Id = @discussionId";
 
-                using var command = new MySqlCommand(query, connection);
-                command.Parameters.AddWithValue("@status", request.Status);
-                command.Parameters.AddWithValue("@updatedByUserId", request.UpdatedByUserId);
-                command.Parameters.AddWithValue("@updatedAt", DateTime.Now);
-                command.Parameters.AddWithValue("@discussionId", discussionId);
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@status", request.Status);
+                updateCommand.Parameters.AddWithValue("@updatedByUserId", request.UpdatedByUserId);
+                updateCommand.Parameters.AddWithValue("@updatedAt", DateTime.Now);
+                updateCommand.Parameters.AddWithValue("@discussionId", discussionId);
 
-                var rowsAffected = await command.ExecuteNonQueryAsync();
+                var rowsAffected = await updateCommand.ExecuteNonQueryAsync();
 
                 if (rowsAffected == 0)
                 {
                     return NotFound(new { message = "Discussion not found" });
                 }
 
-                _logger.LogInformation($"Updated discussion {discussionId} status to {request.Status}");
+                string selectQuery = @"SELECT * FROM Discussions WHERE Id = @discussionId";
+                using var selectCommand = new MySqlCommand(selectQuery, connection);
+                selectCommand.Parameters.AddWithValue("@discussionId", discussionId);
 
-                return Ok(new { message = "Discussion status updated successfully" });
+                using var reader = await selectCommand.ExecuteReaderAsync();
+
+                if (await reader.ReadAsync())
+                {
+                    var updatedDiscussion = new
+                    {
+                        Id = reader.GetInt32("Id"),
+                        Title = reader.GetString("Title"),
+                        Status = reader.GetInt32("Status"),
+                        CreatedAt = reader.GetDateTime("CreatedAt"),
+                        UpdatedAt = reader.IsDBNull("UpdatedAt") ? (DateTime?)null : reader.GetDateTime("UpdatedAt"),
+                        UpdatedByUserId = reader.IsDBNull("UpdatedByUserId") ? (int?)null : reader.GetInt32("UpdatedByUserId")
+                    };
+
+                    _logger.LogInformation($"Updated discussion {discussionId} status to {request.Status}");
+
+                    return Ok(new
+                    {
+                        message = "Discussion status updated successfully",
+                        discussion = updatedDiscussion
+                    });
+                }
+
+                return NotFound(new { message = "Discussion not found after update" });
             }
             catch (Exception ex)
             {
@@ -678,6 +718,65 @@ namespace crmApi.Controllers
             }
         }
 
+        [HttpPut("discussions/{discussionId}/update-timestamp")]
+        public async Task<IActionResult> UpdateDiscussionTimestamp(int discussionId, [FromBody] UpdateDiscussionTimestampRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string updateQuery = @"UPDATE Discussions
+            SET UpdatedAt = @updatedAt,
+                UpdatedByUserId = @updatedByUserId
+            WHERE Id = @discussionId";
+
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@updatedAt", request.UpdatedAt ?? DateTime.Now);
+                updateCommand.Parameters.AddWithValue("@updatedByUserId", request.UpdatedByUserId);
+                updateCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                var rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+
+                if (rowsAffected == 0)
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                string selectQuery = @"SELECT * FROM Discussions WHERE Id = @discussionId";
+                using var selectCommand = new MySqlCommand(selectQuery, connection);
+                selectCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                using var reader = await selectCommand.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var updatedDiscussion = new
+                    {
+                        Id = reader.GetInt32("Id"),
+                        Title = reader.IsDBNull("Title") ? null : reader.GetString("Title"),
+                        Status = reader.GetInt32("Status"),
+                        CreatedAt = reader.GetDateTime("CreatedAt"),
+                        UpdatedAt = reader.IsDBNull("UpdatedAt") ? (DateTime?)null : reader.GetDateTime("UpdatedAt"),
+                        UpdatedByUserId = reader.IsDBNull("UpdatedByUserId") ? (int?)null : reader.GetInt32("UpdatedByUserId")
+                    };
+
+                    _logger.LogInformation($"Updated discussion {discussionId} timestamp");
+                    return Ok(new
+                    {
+                        message = "Discussion timestamp updated successfully",
+                        discussion = updatedDiscussion
+                    });
+                }
+
+                return NotFound(new { message = "Discussion not found after update" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating discussion timestamp");
+                return StatusCode(500, new { message = "Error updating discussion timestamp", error = ex.Message });
+            }
+        }
+        
         [HttpPost("discussions/assign")]
         public async Task<ActionResult> AssignUsersToDiscussion([FromBody] AssignDiscussionRequest request)
         {

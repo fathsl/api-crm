@@ -163,6 +163,7 @@ namespace crmApi.Models
         public int SortOrder { get; set; }
         public int CreatedByUserId { get; set; }
         public string CreatedByUserName { get; set; }
+        public int? DiscussionId { get; set; }
         public DateTime CreatedAt { get; set; }
         public int? UpdatedByUserId { get; set; }
         public string UpdatedByUserName { get; set; }

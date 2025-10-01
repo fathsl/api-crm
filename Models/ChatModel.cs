@@ -220,6 +220,7 @@ namespace crmApi.Models
         public int CreatedByUserId { get; set; }
         public string CreatedByUserName { get; set; }
         public DateTime CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
         public int SenderId { get; set; }
@@ -229,6 +230,12 @@ namespace crmApi.Models
         public string ReceiverName { get; set; }
         public string CreatorName { get; set; }
         public TaskStatus? LastTaskStatus { get; set; }
+    }
+
+    public class UpdateDiscussionTimestampRequest
+    {
+        public int UpdatedByUserId { get; set; }
+        public DateTime? UpdatedAt { get; set; }
     }
 
     public class AssignDiscussionRequest
@@ -253,6 +260,11 @@ namespace crmApi.Models
     public class UpdateTaskStatusInChatDto
     {
         public TaskStatus Status { get; set; }
+        public int UpdatedByUserId { get; set; }
+    }
+
+    public class TouchDiscussionRequest
+    {
         public int UpdatedByUserId { get; set; }
     }
 
