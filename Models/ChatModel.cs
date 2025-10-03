@@ -223,6 +223,7 @@ namespace crmApi.Models
         public DateTime? UpdatedAt { get; set; }
         public List<User> Participants { get; set; } = new List<User>();
         public MessageResponse LastMessage { get; set; }
+        public bool? IsSeen { get; set; }
         public int SenderId { get; set; }
         public string SenderName { get; set; }
         public int ReceiverId { get; set; }
@@ -236,6 +237,11 @@ namespace crmApi.Models
     {
         public int UpdatedByUserId { get; set; }
         public DateTime? UpdatedAt { get; set; }
+    }
+
+    public class MarkDiscussionSeenRequest
+    {
+        public int UserId { get; set; }
     }
 
     public class AssignDiscussionRequest

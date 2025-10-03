@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Mvc;
 using MySql.Data.MySqlClient;
 using OfficeOpenXml;
 using CloudinaryDotNet;
-using CloudinaryDotNet.Actions;
 using Dapper;
 using crmApi.Models.crmApi.Models;
 using System.Data;
@@ -43,7 +42,7 @@ namespace crmApi.Controllers
                 string userRole = roleResult?.ToString() ?? "";
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, d.ClientId,d.UpdatedAt,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt, d.ClientId,d.IsSeen,d.UpdatedAt,
                         COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                         COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                         lt.Status as LastTaskStatus,
@@ -115,6 +114,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
                         Status = discussionStatus,
                         ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
@@ -152,7 +152,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.UpdatedAt,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.IsSeen,d.UpdatedAt,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -235,6 +235,7 @@ namespace crmApi.Controllers
                         SenderName = reader["SenderName"]?.ToString() ?? "",
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                        IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
                         ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         LastTaskStatus = lastTaskStatus
                     });
@@ -271,7 +272,7 @@ namespace crmApi.Controllers
                 var discussions = new List<DiscussionResponse>();
 
                 string query = @"
-                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,UpdatedAt,
+                    SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.IsSeen,UpdatedAt,
                     COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                     COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                     lt.Status as LastTaskStatus,
@@ -342,6 +343,7 @@ namespace crmApi.Controllers
                         ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
                         ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
+                        IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
                         UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
                                                                         ? Convert.ToDateTime(reader["UpdatedAt"]) 
                                                                         : (DateTime?)null,
@@ -368,7 +370,7 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.UpdatedAt,
+                SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, d.CreatedAt,d.ClientId,d.UpdatedAt,d.IsSeen,
                 COALESCE(d.SenderId, cm.SenderId) as SenderId, 
                 COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId, 
                 lt.Status as LastTaskStatus,
@@ -428,6 +430,7 @@ namespace crmApi.Controllers
                         UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
                                                                         ? Convert.ToDateTime(reader["UpdatedAt"]) 
                                                                         : (DateTime?)null,
+                        IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
                         SenderName = reader["SenderName"]?.ToString() ?? "",
@@ -645,7 +648,6 @@ namespace crmApi.Controllers
                     SenderId = request.SenderId,
                     ReceiverId = request.ReceiverId,
                     ClientId = request.ClientId,
-                    CreatedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
@@ -776,7 +778,67 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error updating discussion timestamp", error = ex.Message });
             }
         }
-        
+
+        [HttpPut("discussions/{discussionId}/mark-seen")]
+        public async Task<IActionResult> MarkDiscussionAsSeen(int discussionId, [FromBody] MarkDiscussionSeenRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string updateQuery = @"UPDATE Discussions
+            SET IsSeen = 1,
+                UpdatedByUserId = @updatedByUserId
+            WHERE Id = @discussionId";
+
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@updatedByUserId", request.UserId);
+                updateCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                var rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+
+                if (rowsAffected == 0)
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                string selectQuery = @"SELECT * FROM Discussions WHERE Id = @discussionId";
+                using var selectCommand = new MySqlCommand(selectQuery, connection);
+                selectCommand.Parameters.AddWithValue("@discussionId", discussionId);
+
+                using var reader = await selectCommand.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var updatedDiscussion = new
+                    {
+                        Id = reader.GetInt32("Id"),
+                        Title = reader.IsDBNull("Title") ? null : reader.GetString("Title"),
+                        Status = reader.GetInt32("Status"),
+                        IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
+                        CreatedAt = reader.GetDateTime("CreatedAt"),
+                        UpdatedAt = reader.IsDBNull("UpdatedAt") ? (DateTime?)null : reader.GetDateTime("UpdatedAt"),
+                        UpdatedByUserId = reader.IsDBNull("UpdatedByUserId") ? (int?)null : reader.GetInt32("UpdatedByUserId")
+                    };
+
+                    _logger.LogInformation($"Marked discussion {discussionId} as seen by user {request.UserId}");
+
+                    return Ok(new
+                    {
+                        message = "Discussion marked as seen successfully",
+                        discussion = updatedDiscussion
+                    });
+                }
+
+                return NotFound(new { message = "Discussion not found after update" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error marking discussion as seen");
+                return StatusCode(500, new { message = "Error marking discussion as seen", error = ex.Message });
+            }
+        }
+
         [HttpPost("discussions/assign")]
         public async Task<ActionResult> AssignUsersToDiscussion([FromBody] AssignDiscussionRequest request)
         {
@@ -1050,6 +1112,31 @@ namespace crmApi.Controllers
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@messageId", messageId);
                 command.Parameters.AddWithValue("@userId", userId);
+
+                var affected = await command.ExecuteNonQueryAsync();
+                if (affected == 0)
+                    return Forbid("Only the sender can delete the message");
+
+                return Ok(new { message = "Message deleted" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting message");
+                return StatusCode(500, new { message = "Error deleting message", error = ex.Message });
+            }
+        }
+
+        [HttpDelete("discussions/{discussionId}")]
+        public async Task<ActionResult> DeleteDiscussion(int discussionId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"DELETE FROM Discussions WHERE Id = @discussionId";
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
 
                 var affected = await command.ExecuteNonQueryAsync();
                 if (affected == 0)
@@ -1841,7 +1928,6 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error creating task message with file", error = ex.Message });
             }
         }
-
 
         [HttpPost("messages/send-task-with-voice")]
         public async Task<ActionResult<MessageResponse>> SendTaskWithVoice([FromForm] CreateTaskMessageWithVoiceDto createTaskMessage, IFormFile audioFile)
@@ -3453,7 +3539,6 @@ namespace crmApi.Controllers
                 });
             }
         }
-
 
     }
 

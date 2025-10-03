@@ -155,6 +155,10 @@ namespace crmApi.Controllers
                         Country = reader.IsDBNull("Country") ? null : reader.GetString("Country"),
                         City = reader.IsDBNull("City") ? null : reader.GetString("City"),
                         Address = reader.IsDBNull("Address") ? null : reader.GetString("Address"),
+                        VATNumber = reader.IsDBNull("VATNumber") ? null : reader.GetString("VATNumber"),
+                        ZipCode = reader.IsDBNull("ZipCode") ? null : reader.GetString("ZipCode"),
+                        ImageUrl = reader.IsDBNull("ImageUrl") ? null : reader.GetString("ImageUrl"),
+                        CreatedBy = reader.IsDBNull("CreatedBy") ? null : reader.GetInt32("CreatedBy"),
                         projectIds = projectIds,
                         CreatedAt = reader.GetDateTime("CreatedAt")
                     };
@@ -212,10 +216,11 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string query = @"
-            INSERT INTO Clients
-                (First_name, Last_name, Phone, Email, Details, Country, CreatedBy, CreatedAt, City, Address, ZipCode, VATNumber, ImageUrl)
-            VALUES
-                (@First_name, @Last_name, @Phone, @Email, @Details, @Country, @CreatedBy, @CreatedAt, @City, @Address, @ZipCode, @VATNumber, @ImageUrl)";
+                    INSERT INTO Clients
+                        (First_name, Last_name, Phone, Email, Details, Country, CreatedBy, CreatedAt, City, Address, ZipCode, VATNumber, ImageUrl)
+                    VALUES
+                        (@First_name, @Last_name, @Phone, @Email, @Details, @Country, @CreatedBy, @CreatedAt, @City, @Address, @ZipCode, @VATNumber, @ImageUrl);
+                    SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@First_name", clientDto.First_name);
@@ -232,12 +237,13 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@VATNumber", (object?)clientDto.VATNumber ?? DBNull.Value);
                 command.Parameters.AddWithValue("@ImageUrl", (object?)cloudinaryUrl ?? DBNull.Value);
 
-                await command.ExecuteNonQueryAsync();
+                var clientId = Convert.ToInt32(await command.ExecuteScalarAsync());
 
                 return Ok(new
                 {
                     message = "Müşteri başarıyla oluşturuldu",
-                    imageUrl = cloudinaryUrl
+                    imageUrl = cloudinaryUrl,
+                    id = clientId
                 });
             }
             catch (Exception ex)
@@ -253,7 +259,6 @@ namespace crmApi.Controllers
             }
         }
 
-
         // PUT: api/Clients/{id}
         [HttpPut("{id}")]
         public async Task<ActionResult> UpdateClient(int id, [FromBody] UpdateClientDto clientDto)
@@ -266,19 +271,20 @@ namespace crmApi.Controllers
                 using var transaction = await connection.BeginTransactionAsync();
 
                 string query = @"
-                    UPDATE Clients
-                    SET First_name = @First_name,
-                        Last_name = @Last_name,
-                        Phone = @Phone,
-                        Email = @Email,
-                        Details = @Details,
-                        Country = @Country,
-                        modifiedBy = @modifiedBy,
-                        modifiedAt = @modifiedAt,
-                        City = @City,
-                        Address = @Address,
-                        projectId = @projectId
-                    WHERE Id = @Id";
+                        UPDATE Clients
+                        SET First_name = @First_name,
+                            Last_name = @Last_name,
+                            Phone = @Phone,
+                            Email = @Email,
+                            Details = @Details,
+                            Country = @Country,
+                            modifiedBy = @modifiedBy,
+                            modifiedAt = @modifiedAt,
+                            City = @City,
+                            Address = @Address,
+                            ZipCode = @ZipCode,
+                            VATNumber = @VATNumber
+                        WHERE Id = @Id";
 
                 using var command = new MySqlCommand(query, connection, transaction);
                 command.Parameters.AddWithValue("@First_name", clientDto.First_name);
@@ -288,10 +294,12 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Details", (object?)clientDto.Details ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Country", (object?)clientDto.Country ?? DBNull.Value);
                 command.Parameters.AddWithValue("@modifiedBy", clientDto.modifiedBy);
-                command.Parameters.AddWithValue("@ModifiedAt", DateTime.Now);
+                command.Parameters.AddWithValue("@modifiedAt", DateTime.Now);
                 command.Parameters.AddWithValue("@Id", id);
                 command.Parameters.AddWithValue("@City", (object?)clientDto.City ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Address", (object?)clientDto.Address ?? DBNull.Value);
+                command.Parameters.AddWithValue("@ZipCode", (object?)clientDto.ZipCode ?? DBNull.Value);
+                command.Parameters.AddWithValue("@VATNumber", (object?)clientDto.VATNumber ?? DBNull.Value);
 
                 int rows = await command.ExecuteNonQueryAsync();
                 if (rows == 0)
