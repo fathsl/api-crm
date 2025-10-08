@@ -210,6 +210,16 @@ namespace crmApi.Models
         public DateTime? SeenAt { get; set; }
     }
 
+    public class UpdateDiscussionRequest
+    {
+        public string Title { get; set; }
+        public string? Description { get; set; }
+        public int Status { get; set; }
+        public int ClientId { get; set; }
+        public List<int>? ClientIds { get; set; }
+        public int? UpdatedByUserId { get; set; }
+    }
+
     public class DiscussionResponse
     {
         public int Id { get; set; }

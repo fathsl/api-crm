@@ -657,6 +657,149 @@ namespace crmApi.Controllers
             }
         }
 
+        [HttpPut("discussions/{id}")]
+        public async Task<ActionResult<DiscussionResponse>> UpdateDiscussion(int id, [FromBody] UpdateDiscussionRequest request)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string checkQuery = "SELECT COUNT(*) FROM Discussions WHERE Id = @id";
+                using var checkCommand = new MySqlCommand(checkQuery, connection);
+                checkCommand.Parameters.AddWithValue("@id", id);
+                var exists = Convert.ToInt32(await checkCommand.ExecuteScalarAsync()) > 0;
+
+                if (!exists)
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                if (request.ClientId > 0)
+                {
+                    string checkClientQuery = "SELECT COUNT(*) FROM Clients WHERE id = @clientId";
+                    using var checkClientCommand = new MySqlCommand(checkClientQuery, connection);
+                    checkClientCommand.Parameters.AddWithValue("@clientId", request.ClientId);
+                    var clientExists = Convert.ToInt32(await checkClientCommand.ExecuteScalarAsync()) > 0;
+
+                    if (!clientExists)
+                    {
+                        return BadRequest(new { message = $"Client with ID {request.ClientId} not found" });
+                    }
+                }
+
+                string updateQuery = @"UPDATE Discussions 
+                             SET Title = @title, 
+                                 Description = @description, 
+                                 Status = @status,
+                                 ClientId = @clientId,
+                                 UpdatedAt = @updatedAt
+                             WHERE Id = @id";
+
+                using var updateCommand = new MySqlCommand(updateQuery, connection);
+                updateCommand.Parameters.AddWithValue("@id", id);
+                updateCommand.Parameters.AddWithValue("@title", request.Title);
+                updateCommand.Parameters.AddWithValue("@description", request.Description ?? "");
+                updateCommand.Parameters.AddWithValue("@status", request.Status);
+                updateCommand.Parameters.AddWithValue("@clientId", request.ClientId > 0 ? (object)request.ClientId : DBNull.Value);
+                updateCommand.Parameters.AddWithValue("@updatedAt", DateTime.Now);
+
+                _logger.LogInformation($"Updating discussion {id} with Title: {request.Title}, Status: {request.Status}");
+
+                await updateCommand.ExecuteNonQueryAsync();
+
+                if (request.ClientIds != null && request.ClientIds.Any())
+                {
+                    string getSenderReceiverQuery = "SELECT SenderId, ReceiverId FROM Discussions WHERE Id = @id";
+                    using var getSenderReceiverCommand = new MySqlCommand(getSenderReceiverQuery, connection);
+                    getSenderReceiverCommand.Parameters.AddWithValue("@id", id);
+
+                    int senderId = 0;
+                    int receiverId = 0;
+
+                    using var reader = await getSenderReceiverCommand.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        senderId = reader.GetInt32("SenderId");
+                        receiverId = reader.GetInt32("ReceiverId");
+                    }
+                    await reader.CloseAsync();
+
+                    string deleteParticipantsQuery = @"DELETE FROM DiscussionParticipants 
+                                              WHERE DiscussionId = @discussionId 
+                                              AND UserId NOT IN (@senderId, @receiverId)";
+                    using var deleteCommand = new MySqlCommand(deleteParticipantsQuery, connection);
+                    deleteCommand.Parameters.AddWithValue("@discussionId", id);
+                    deleteCommand.Parameters.AddWithValue("@senderId", senderId);
+                    deleteCommand.Parameters.AddWithValue("@receiverId", receiverId);
+                    await deleteCommand.ExecuteNonQueryAsync();
+
+                    foreach (var clientId in request.ClientIds)
+                    {
+                        if (clientId == senderId || clientId == receiverId)
+                            continue;
+
+                        string insertParticipantQuery = @"INSERT INTO DiscussionParticipants 
+                                                 (DiscussionId, UserId, Role, JoinedAt, JoinedByUserId)
+                                                 VALUES (@discussionId, @userId, 0, @joinedAt, @joinedByUserId)
+                                                 ON DUPLICATE KEY UPDATE UserId = UserId";
+
+                        using var participantCommand = new MySqlCommand(insertParticipantQuery, connection);
+                        participantCommand.Parameters.AddWithValue("@discussionId", id);
+                        participantCommand.Parameters.AddWithValue("@userId", clientId);
+                        participantCommand.Parameters.AddWithValue("@joinedAt", DateTime.Now);
+                        participantCommand.Parameters.AddWithValue("@joinedByUserId", request.UpdatedByUserId ?? senderId);
+                        await participantCommand.ExecuteNonQueryAsync();
+                    }
+                }
+
+                string selectQuery = @"SELECT d.*, 
+                                     u1.KullaniciAdi as SenderFirstName, 
+                                     u2.KullaniciAdi as ReceiverFirstName
+                              FROM Discussions d
+                              LEFT JOIN KullaniciBilgileri u1 ON d.SenderId = u1.KullaniciID
+                              LEFT JOIN KullaniciBilgileri u2 ON d.ReceiverId = u2.KullaniciID
+                              WHERE d.Id = @id";
+
+                using var selectCommand = new MySqlCommand(selectQuery, connection);
+                selectCommand.Parameters.AddWithValue("@id", id);
+
+                using var resultReader = await selectCommand.ExecuteReaderAsync();
+
+                if (await resultReader.ReadAsync())
+                {
+                    var response = new DiscussionResponse
+                    {
+                        Id = resultReader.GetInt32("Id"),
+                        Title = resultReader.GetString("Title"),
+                        Description = resultReader.IsDBNull(resultReader.GetOrdinal("Description"))
+                            ? ""
+                            : resultReader.GetString("Description"),
+                        Status = (byte)resultReader.GetInt32("Status"),
+                        CreatedByUserId = resultReader.GetInt32("CreatedByUserId"),
+                        SenderId = resultReader.GetInt32("SenderId"),
+                        ReceiverId = resultReader.GetInt32("ReceiverId"),
+                        ClientId = resultReader.IsDBNull(resultReader.GetOrdinal("ClientId"))
+                            ? 0
+                            : resultReader.GetInt32("ClientId"),
+                        CreatedAt = resultReader.GetDateTime("CreatedAt"),
+                        UpdatedAt = resultReader.IsDBNull(resultReader.GetOrdinal("UpdatedAt"))
+                            ? (DateTime?)null
+                            : resultReader.GetDateTime("UpdatedAt")
+                    };
+
+                    return Ok(response);
+                }
+
+                return NotFound(new { message = "Discussion not found after update" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating discussion {id}");
+                return StatusCode(500, new { message = "Error updating discussion", error = ex.Message });
+            }
+        }
+
         [HttpPut("discussions/{discussionId}/status")]
         public async Task<IActionResult> UpdateDiscussionStatus(int discussionId, [FromBody] UpdateDiscussionStatusRequest request)
         {

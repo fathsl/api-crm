@@ -110,18 +110,18 @@ namespace crmApi.Models
     public class MeetingResponseDto
     {
         public int Id { get; set; }
-        public string Title { get; set; } = null!;
+        public string Title { get; set; }
         public string? Description { get; set; }
         public DateTime MeetingDate { get; set; }
         public int DurationMinutes { get; set; }
         public string? Location { get; set; }
-        public string MeetingType { get; set; } = null!;
-        public string Status { get; set; } = null!;
+        public string MeetingType { get; set; }
+        public string Status { get; set; }
         public int CreatedBy { get; set; }
         public int? ClientId { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime ModifiedAt { get; set; }
-        
+        public int? ModifiedBy { get; set; }
         public string? ClientName { get; set; }
         public string? ClientCompanyName { get; set; }
         public string? ClientEmail { get; set; }
@@ -130,52 +130,77 @@ namespace crmApi.Models
         public string? CreatedByUserName { get; set; }
         public string? ModifiedByUserName { get; set; }
     }
-
-    public class MeetingCreateDto
+    
+    public class MeetingDetailDto : MeetingResponseDto
     {
-        [Required]
-        [StringLength(255)]
-        public string Title { get; set; } = null!;
-        
-        public string? Description { get; set; }
-        
-        [Required]
-        public DateTime MeetingDate { get; set; }
-        
-        public int DurationMinutes { get; set; } = 60;
-        
-        [StringLength(255)]
-        public string? Location { get; set; }
-        
-        [StringLength(50)]
-        public string MeetingType { get; set; } = "in-person";
-        
-        public int? ClientId { get; set; }
-        
-        public List<int>? ParticipantUserIds { get; set; }
+        public List<MeetingParticipantDto> Participants { get; set; } = new List<MeetingParticipantDto>();
     }
 
-    public class MeetingUpdateDto
+    public class MeetingParticipantDto
     {
+        public int UserId { get; set; }
+        public string UserName { get; set; }
+        public string? Email { get; set; }
+    }
+
+    public class CreateMeetingDto
+    {
+        [Required]
         [StringLength(255)]
-        public string? Title { get; set; }
-        
+        public string Title { get; set; }
+
         public string? Description { get; set; }
-        
-        public DateTime? MeetingDate { get; set; }
-        
-        public int? DurationMinutes { get; set; }
-        
+
+        [Required]
+        public DateTime MeetingDate { get; set; }
+
+        public int DurationMinutes { get; set; } = 60;
+
         [StringLength(255)]
         public string? Location { get; set; }
-        
+
         [StringLength(50)]
-        public string? MeetingType { get; set; }
-        
+        public string MeetingType { get; set; } = "in-person";
+
         [StringLength(50)]
-        public string? Status { get; set; }
-        
+        public string Status { get; set; } = "scheduled";
+
+        [Required]
+        public int CreatedBy { get; set; }
+
         public int? ClientId { get; set; }
+
+        public List<int>? ParticipantIds { get; set; }
+    }
+
+    public class UpdateMeetingDto
+    {
+        [Required]
+        [StringLength(255)]
+        public string Title { get; set; }
+
+        public string? Description { get; set; }
+
+        [Required]
+        public DateTime MeetingDate { get; set; }
+
+        public int DurationMinutes { get; set; } = 60;
+
+        [StringLength(255)]
+        public string? Location { get; set; }
+
+        [StringLength(50)]
+        public string MeetingType { get; set; } = "in-person";
+
+        [StringLength(50)]
+        public string Status { get; set; } = "scheduled";
+
+        public int? ClientId { get; set; }
+
+        [Required]
+        public int ModifiedBy { get; set; }
+
+        public List<int>? ParticipantIds { get; set; }
     }
 
     public class MeetingDocumentDto
