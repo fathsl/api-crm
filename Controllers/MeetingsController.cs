@@ -174,17 +174,17 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 using var transaction = await connection.BeginTransactionAsync();
+                int meetingId;
 
                 try
                 {
                     string insertMeetingQuery = @"
-                        INSERT INTO Meetings (Title, Description, MeetingDate, DurationMinutes, Location, 
-                                            MeetingType, Status, CreatedBy, ClientId, CreatedAt, ModifiedAt)
-                        VALUES (@Title, @Description, @MeetingDate, @DurationMinutes, @Location, 
-                                @MeetingType, @Status, @CreatedBy, @ClientId, @CreatedAt, @ModifiedAt);
-                        SELECT LAST_INSERT_ID();";
+                INSERT INTO Meetings (Title, Description, MeetingDate, DurationMinutes, Location,
+                                      MeetingType, Status, CreatedBy, ClientId, CreatedAt, ModifiedAt)
+                VALUES (@Title, @Description, @MeetingDate, @DurationMinutes, @Location,
+                        @MeetingType, @Status, @CreatedBy, @ClientId, @CreatedAt, @ModifiedAt);
+                SELECT LAST_INSERT_ID();";
 
-                    int meetingId;
                     using (var command = new MySqlCommand(insertMeetingQuery, connection, transaction))
                     {
                         command.Parameters.AddWithValue("@Title", createDto.Title);
@@ -205,8 +205,8 @@ namespace crmApi.Controllers
                     if (createDto.ParticipantIds != null && createDto.ParticipantIds.Any())
                     {
                         string insertParticipantQuery = @"
-                            INSERT INTO MeetingParticipants (meeting_id, user_id)
-                            VALUES (@MeetingId, @UserId)";
+                    INSERT INTO MeetingParticipants (meeting_id, user_id)
+                    VALUES (@MeetingId, @UserId)";
 
                         foreach (var participantId in createDto.ParticipantIds)
                         {
@@ -218,15 +218,15 @@ namespace crmApi.Controllers
                     }
 
                     await transaction.CommitAsync();
-
-                    var createdMeeting = await GetMeetingById(meetingId, connection);
-                    return CreatedAtAction(nameof(GetMeeting), new { id = meetingId }, createdMeeting);
                 }
-                catch
+                catch (Exception ex)
                 {
                     await transaction.RollbackAsync();
-                    throw;
+                    return StatusCode(500, new { message = "Transaction failed", error = ex.Message });
                 }
+
+                var createdMeeting = await GetMeetingById(meetingId, connection);
+                return CreatedAtAction(nameof(GetMeeting), new { id = meetingId }, createdMeeting);
             }
             catch (Exception ex)
             {
@@ -449,27 +449,72 @@ namespace crmApi.Controllers
 
             return Ok(documents);
         }
-        
-        private async Task<MeetingResponseDto> GetMeetingById(int id, MySqlConnection connection)
+
+        [HttpGet("{meetingId}/participants")]
+        public async Task<ActionResult<IEnumerable<MeetingParticipantsResponseDto>>> GetParticipantsByMeetingId(int meetingId)
+        {
+            var participants = new List<MeetingParticipantsResponseDto>();
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+                string query = @"
+                    SELECT
+                        mp.participant_id,
+                        mp.meeting_id,
+                        mp.user_id,
+                        mp.role,
+                        mp.attendance_status,
+                        mp.added_at,
+                        kb.Ad AS user_first_name,
+                        kb.Soyad AS user_last_name,
+                        kb.Email AS user_email
+                    FROM MeetingParticipants mp
+                    LEFT JOIN KullaniciBilgileri kb ON mp.user_id = kb.KullaniciID
+                    WHERE mp.meeting_id = @MeetingId";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@MeetingId", meetingId);
+
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var participant = new MeetingParticipantsResponseDto
+                    {
+                        ParticipantId = reader.GetInt64("participant_id"),
+                        MeetingId = reader.GetInt32("meeting_id"),
+                        UserId = reader.GetInt32("user_id"),
+                        Role = reader.IsDBNull(reader.GetOrdinal("role")) ? "participant" : reader.GetString("role"),
+                        AttendanceStatus = reader.IsDBNull(reader.GetOrdinal("attendance_status")) ? "pending" : reader.GetString("attendance_status"),
+                        AddedAt = reader.GetDateTime("added_at"),
+                        UserName = !reader.IsDBNull(reader.GetOrdinal("user_first_name")) && !reader.IsDBNull(reader.GetOrdinal("user_last_name"))
+                            ? $"{reader.GetString("user_first_name")} {reader.GetString("user_last_name")}"
+                            : null,
+                        UserEmail = reader.IsDBNull(reader.GetOrdinal("user_email")) ? null : reader.GetString("user_email")
+                    };
+                    participants.Add(participant);
+                }
+                return Ok(participants);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error retrieving participants", error = ex.Message });
+            }
+        }
+
+        private async Task<MeetingResponseDto> GetMeetingById(int meetingId, MySqlConnection connection)
         {
             string query = @"
-                SELECT m.*,
-                       c.First_name AS ClientFirstName, c.Last_name AS ClientLastName,
-                       c.Email AS ClientEmail, c.Details AS ClientCompanyName,
-                       cu.Ad AS OrganizerFirstName, cu.Soyad AS OrganizerLastName,
-                       cbu.Ad AS CreatedByFirstName, cbu.Soyad AS CreatedByLastName,
-                       COUNT(DISTINCT mp.user_id) AS ParticipantCount
+                SELECT m.*, 
+                    COUNT(DISTINCT mp.user_id) AS ParticipantCount
                 FROM Meetings m
-                LEFT JOIN Clients c ON m.ClientId = c.Id
-                LEFT JOIN KullaniciBilgileri cu ON m.CreatedBy = cu.KullaniciID
-                LEFT JOIN KullaniciBilgileri cbu ON m.CreatedBy = cbu.KullaniciID
                 LEFT JOIN MeetingParticipants mp ON m.meeting_id = mp.meeting_id
-                WHERE m.meeting_id = @Id
-                GROUP BY m.meeting_id, c.Id, cu.KullaniciID, cbu.KullaniciID";
+                WHERE m.meeting_id = @MeetingId
+                GROUP BY m.meeting_id";
 
             using var command = new MySqlCommand(query, connection);
-            command.Parameters.AddWithValue("@Id", id);
-            
+            command.Parameters.AddWithValue("@MeetingId", meetingId);
+
             using var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -477,18 +522,26 @@ namespace crmApi.Controllers
                 {
                     Id = Convert.ToInt32(reader["meeting_id"]),
                     Title = reader["Title"].ToString(),
-                    Description = reader.IsDBNull(reader.GetOrdinal("Description")) ? null : reader.GetString("Description"),
+                    Description = reader.IsDBNull(reader.GetOrdinal("Description"))
+                        ? null
+                        : reader.GetString("Description"),
                     MeetingDate = reader.GetDateTime("MeetingDate"),
                     DurationMinutes = reader.GetInt32("DurationMinutes"),
-                    Location = reader.IsDBNull(reader.GetOrdinal("Location")) ? null : reader.GetString("Location"),
+                    Location = reader.IsDBNull(reader.GetOrdinal("Location"))
+                        ? null
+                        : reader.GetString("Location"),
                     MeetingType = reader.GetString("MeetingType"),
                     Status = reader.GetString("Status"),
-                    CreatedBy = reader.GetInt32("CreatedBy"),
-                    ModifiedBy = reader.GetInt32("ModifiedBy"),
-                    ClientId = reader.IsDBNull(reader.GetOrdinal("ClientId")) ? null : reader.GetInt32("ClientId"),
-                    CreatedAt = reader.GetDateTime("CreatedAt"),
-                    ModifiedAt = reader.GetDateTime("ModifiedAt"),
-                    ParticipantCount = reader.GetInt32("ParticipantCount")
+                    CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? 0 : reader.GetInt32("CreatedBy"),
+                    ClientId = reader.IsDBNull(reader.GetOrdinal("ClientId"))
+                        ? null
+                        : reader.GetInt32("ClientId"),
+                    CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt")) ? DateTime.MinValue : reader.GetDateTime("CreatedAt"),
+                    ModifiedAt = reader.IsDBNull(reader.GetOrdinal("ModifiedAt")) ? DateTime.MinValue : reader.GetDateTime("ModifiedAt"),
+                    ModifiedBy = reader.IsDBNull(reader.GetOrdinal("ModifiedBy")) ? 0 : reader.GetInt32("ModifiedBy"),
+                    ParticipantCount = reader.IsDBNull(reader.GetOrdinal("ParticipantCount"))
+                        ? 0
+                        : reader.GetInt32("ParticipantCount")
                 };
             }
 

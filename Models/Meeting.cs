@@ -143,6 +143,18 @@ namespace crmApi.Models
         public string? Email { get; set; }
     }
 
+    public class MeetingParticipantsResponseDto
+    {
+        public long ParticipantId { get; set; }
+        public int MeetingId { get; set; }
+        public int UserId { get; set; }
+        public string Role { get; set; }
+        public string AttendanceStatus { get; set; }
+        public DateTime AddedAt { get; set; }
+        public string? UserName { get; set; }
+        public string? UserEmail { get; set; }
+    }
+
     public class CreateMeetingDto
     {
         [Required]

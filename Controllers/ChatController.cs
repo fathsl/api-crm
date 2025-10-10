@@ -106,8 +106,8 @@ namespace crmApi.Controllers
                         Description = reader["Description"].ToString() ?? "",
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
-                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
-                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"])
                                                                         : (DateTime?)null,
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
@@ -227,8 +227,8 @@ namespace crmApi.Controllers
                         Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
-                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
-                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"])
                                                                         : (DateTime?)null,
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
                         ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
@@ -344,8 +344,8 @@ namespace crmApi.Controllers
                         CreatorName = reader["CreatorName"]?.ToString() ?? "",
                         ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
                         IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
-                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
-                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"])
                                                                         : (DateTime?)null,
                         LastTaskStatus = lastTaskStatus
                     });
@@ -427,8 +427,8 @@ namespace crmApi.Controllers
                         Status = discussionStatus,
                         CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
                         CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
-                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value 
-                                                                        ? Convert.ToDateTime(reader["UpdatedAt"]) 
+                        UpdatedAt = reader["UpdatedAt"] != DBNull.Value
+                                                                        ? Convert.ToDateTime(reader["UpdatedAt"])
                                                                         : (DateTime?)null,
                         IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
                         SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
@@ -3680,6 +3680,43 @@ namespace crmApi.Controllers
                     message = "Error getting unseen message count",
                     error = ex.Message
                 });
+            }
+        }
+
+        [HttpGet("users/unreadcounts")]
+        public async Task<ActionResult<Dictionary<int, int>>> GetAllUsersUnreadCounts()
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+                    SELECT ReceiverId as UserId, COUNT(*) as UnreadCount
+                    FROM ChatMessages
+                    WHERE IsSeen = 0 AND ReceiverId IS NOT NULL
+                    GROUP BY ReceiverId";
+
+                using var command = new MySqlCommand(query, connection);
+                using var reader = await command.ExecuteReaderAsync();
+
+                var counts = new Dictionary<int, int>();
+                while (await reader.ReadAsync())
+                {
+                    if (!reader.IsDBNull(reader.GetOrdinal("UserId")))
+                    {
+                        int userId = Convert.ToInt32(reader["UserId"]);
+                        int unreadCount = Convert.ToInt32(reader["UnreadCount"]);
+                        counts[userId] = unreadCount;
+                    }
+                }
+
+                return Ok(counts);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting all users unread counts");
+                return StatusCode(500, new { message = "Error getting unread counts", error = ex.Message });
             }
         }
 
