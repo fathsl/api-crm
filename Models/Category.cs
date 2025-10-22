@@ -21,6 +21,7 @@ namespace crmApi.Models
         public string? KategoriAdi { get; set; }
         public int? Stok { get; set; }
         public decimal Fiyat { get; set; }
+        public string? Currency { get; set; } = "TRY";
         public int? CreatedBy { get; set; }
         public int? UpdatedBy { get; set; }
         public DateTime CreatedAt { get; set; }
@@ -35,6 +36,7 @@ namespace crmApi.Models
         public string? KategoriAdi { get; set; }
         public int? Stok { get; set; }
         public decimal Fiyat { get; set; }
+        public string? Currency { get; set; } = "TRY";
         public int? CreatedBy { get; set; }
         public int? UpdatedBy { get; set; }
         public DateTime CreatedAt { get; set; }
@@ -47,6 +49,7 @@ namespace crmApi.Models
     {
         public string? KategoriAdi { get; set; }
         public int? Stok { get; set; }
+        public string? Currency { get; set; } = "TRY";
         public decimal Fiyat { get; set; }
         public int CreatedBy { get; set; }
     }
@@ -56,6 +59,7 @@ namespace crmApi.Models
         public string? KategoriAdi { get; set; }
         public int? Stok { get; set; }
         public decimal Fiyat { get; set; }
+        public string? Currency { get; set; } = "TRY";
         public int UpdatedBy { get; set; }
     }
 

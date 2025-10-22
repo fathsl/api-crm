@@ -4,7 +4,6 @@ using System.Data;
 using crmApi.Models;
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
-using crmApi.Models.crmApi.Models;
 
 namespace crmApi.Controllers
 {
@@ -261,30 +260,83 @@ namespace crmApi.Controllers
 
         // PUT: api/Clients/{id}
         [HttpPut("{id}")]
-        public async Task<ActionResult> UpdateClient(int id, [FromBody] UpdateClientDto clientDto)
+        public async Task<ActionResult> UpdateClient(int id, [FromForm] UpdateClientDto clientDto, IFormFile? file)
         {
             using var connection = new MySqlConnection(_connectionString);
-                        
+
             try
             {
+                Console.WriteLine($"Updating client {id}");
+                Console.WriteLine($"First_name: {clientDto.First_name}");
+                Console.WriteLine($"Last_name: {clientDto.Last_name}");
+                Console.WriteLine($"Email: {clientDto.Email}");
+                Console.WriteLine($"VATNumber: {clientDto.VATNumber}");
+                Console.WriteLine($"File provided: {file != null}");
+
+                if (string.IsNullOrWhiteSpace(clientDto.First_name))
+                {
+                    return BadRequest(new { message = "First name is required" });
+                }
+
+                if (string.IsNullOrWhiteSpace(clientDto.Last_name))
+                {
+                    return BadRequest(new { message = "Last name is required" });
+                }
+
                 await connection.OpenAsync();
                 using var transaction = await connection.BeginTransactionAsync();
 
-                string query = @"
-                        UPDATE Clients
-                        SET First_name = @First_name,
-                            Last_name = @Last_name,
-                            Phone = @Phone,
-                            Email = @Email,
-                            Details = @Details,
-                            Country = @Country,
-                            modifiedBy = @modifiedBy,
-                            modifiedAt = @modifiedAt,
-                            City = @City,
-                            Address = @Address,
-                            ZipCode = @ZipCode,
-                            VATNumber = @VATNumber
-                        WHERE Id = @Id";
+                string? imageUrl = null;
+                if (file != null && file.Length > 0)
+                {
+                    if (!file.ContentType.StartsWith("image/"))
+                    {
+                        await transaction.RollbackAsync();
+                        return BadRequest(new { message = "Only image files are allowed" });
+                    }
+                    try
+                    {
+                        imageUrl = await UploadToCloudinary(file, file.FileName);
+                        Console.WriteLine($"Image uploaded: {imageUrl}");
+                    }
+                    catch (Exception ex)
+                    {
+                        await transaction.RollbackAsync();
+                        Console.WriteLine($"Image upload error: {ex.Message}");
+                        return StatusCode(500, new { message = $"File upload failed: {ex.Message}" });
+                    }
+                }
+
+                string query = imageUrl != null
+                    ? @"UPDATE Clients
+                SET First_name = @First_name,
+                    Last_name = @Last_name,
+                    Phone = @Phone,
+                    Email = @Email,
+                    Details = @Details,
+                    Country = @Country,
+                    modifiedBy = @modifiedBy,
+                    modifiedAt = @modifiedAt,
+                    City = @City,
+                    Address = @Address,
+                    ZipCode = @ZipCode,
+                    VATNumber = @VATNumber,
+                    ImageUrl = @ImageUrl
+                WHERE Id = @Id"
+                    : @"UPDATE Clients
+                SET First_name = @First_name,
+                    Last_name = @Last_name,
+                    Phone = @Phone,
+                    Email = @Email,
+                    Details = @Details,
+                    Country = @Country,
+                    modifiedBy = @modifiedBy,
+                    modifiedAt = @modifiedAt,
+                    City = @City,
+                    Address = @Address,
+                    ZipCode = @ZipCode,
+                    VATNumber = @VATNumber
+                WHERE Id = @Id";
 
                 using var command = new MySqlCommand(query, connection, transaction);
                 command.Parameters.AddWithValue("@First_name", clientDto.First_name);
@@ -301,39 +353,61 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@ZipCode", (object?)clientDto.ZipCode ?? DBNull.Value);
                 command.Parameters.AddWithValue("@VATNumber", (object?)clientDto.VATNumber ?? DBNull.Value);
 
+                if (imageUrl != null)
+                {
+                    command.Parameters.AddWithValue("@ImageUrl", imageUrl);
+                }
+
                 int rows = await command.ExecuteNonQueryAsync();
+                Console.WriteLine($"Rows updated: {rows}");
+
                 if (rows == 0)
                 {
                     await transaction.RollbackAsync();
                     return NotFound(new { message = "Client not found" });
                 }
 
-                string deleteProjects = "DELETE FROM ClientProjects WHERE client_id = @clientId;";
-                using var deleteCmd = new MySqlCommand(deleteProjects, connection, transaction);
-                deleteCmd.Parameters.AddWithValue("@clientId", id);
-                await deleteCmd.ExecuteNonQueryAsync();
-
-                if (clientDto.projectIds?.Any() == true)
+                if (clientDto.projectIds != null)
                 {
-                    string insertProjects = "INSERT INTO ClientProjects (client_id, project_id) VALUES ";
-                    var values = clientDto.projectIds.Select((pId, index) => $"(@clientId, @projectId{index})");
-                    insertProjects += string.Join(", ", values);
+                    string deleteProjects = "DELETE FROM ClientProjects WHERE client_id = @clientId;";
+                    using var deleteCmd = new MySqlCommand(deleteProjects, connection, transaction);
+                    deleteCmd.Parameters.AddWithValue("@clientId", id);
+                    await deleteCmd.ExecuteNonQueryAsync();
 
-                    using var insertCmd = new MySqlCommand(insertProjects, connection, transaction);
-                    insertCmd.Parameters.AddWithValue("@clientId", id);
-                    for (int i = 0; i < clientDto.projectIds.Count; i++)
+                    if (clientDto.projectIds.Any())
                     {
-                        insertCmd.Parameters.AddWithValue($"@projectId{i}", clientDto.projectIds[i]);
+                        string insertProjects = "INSERT INTO ClientProjects (client_id, project_id) VALUES ";
+                        var values = clientDto.projectIds.Select((pId, index) => $"(@clientId, @projectId{index})");
+                        insertProjects += string.Join(", ", values);
+
+                        using var insertCmd = new MySqlCommand(insertProjects, connection, transaction);
+                        insertCmd.Parameters.AddWithValue("@clientId", id);
+                        for (int i = 0; i < clientDto.projectIds.Count; i++)
+                        {
+                            insertCmd.Parameters.AddWithValue($"@projectId{i}", clientDto.projectIds[i]);
+                        }
+                        await insertCmd.ExecuteNonQueryAsync();
                     }
-                    await insertCmd.ExecuteNonQueryAsync();
                 }
 
                 await transaction.CommitAsync();
-                return Ok(new { message = "Client updated successfully" });
+                Console.WriteLine("Transaction committed successfully");
+
+                return Ok(new
+                {
+                    message = "Client updated successfully",
+                    imageUrl = imageUrl
+                });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error updating client", error = ex.Message });
+                Console.WriteLine($"Error updating client: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return StatusCode(500, new
+                {
+                    message = "Error updating client",
+                    error = ex.Message
+                });
             }
         }
 

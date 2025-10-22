@@ -51,12 +51,13 @@ namespace crmApi.Controllers
                         KategoriAdi = reader.IsDBNull(reader.GetOrdinal("KategoriAdi")) ? null : reader.GetString("KategoriAdi"),
                         Stok = reader.IsDBNull(reader.GetOrdinal("Stok")) ? null : reader.GetInt32("Stok"),
                         Fiyat = reader.IsDBNull(reader.GetOrdinal("Fiyat")) ? 0 : reader.GetDecimal("Fiyat"),
+                        Currency = reader.IsDBNull(reader.GetOrdinal("Currency")) ? "TRY" : reader.GetString("Currency"),
                         CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? 0 : reader.GetInt32("CreatedBy"),
                         UpdatedBy = reader.IsDBNull(reader.GetOrdinal("UpdatedBy")) ? null : reader.GetInt32("UpdatedBy"),
                         CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt")) ? DateTime.UtcNow : reader.GetDateTime("CreatedAt"),
                         UpdatedAt = reader.IsDBNull(reader.GetOrdinal("UpdatedAt")) ? DateTime.UtcNow : reader.GetDateTime("UpdatedAt"),
                         CreatedByName = $"{createdByFirstName} {createdByLastName}".Trim(),
-                        UpdatedByName = updatedByFirstName != null && updatedByLastName != null ? 
+                        UpdatedByName = updatedByFirstName != null && updatedByLastName != null ?
                                        $"{updatedByFirstName} {updatedByLastName}".Trim() : null
                     };
                     categories.Add(category);
@@ -105,12 +106,13 @@ namespace crmApi.Controllers
                         KategoriAdi = reader.IsDBNull(reader.GetOrdinal("KategoriAdi")) ? null : reader.GetString("KategoriAdi"),
                         Stok = reader.IsDBNull(reader.GetOrdinal("Stok")) ? null : reader.GetInt32("Stok"),
                         Fiyat = reader.IsDBNull(reader.GetOrdinal("Fiyat")) ? 0 : reader.GetDecimal("Fiyat"),
+                        Currency = reader.IsDBNull(reader.GetOrdinal("Currency")) ? "TRY" : reader.GetString("Currency"),
                         CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? 0 : reader.GetInt32("CreatedBy"),
                         UpdatedBy = reader.IsDBNull(reader.GetOrdinal("UpdatedBy")) ? null : reader.GetInt32("UpdatedBy"),
                         CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt")) ? DateTime.UtcNow : reader.GetDateTime("CreatedAt"),
                         UpdatedAt = reader.IsDBNull(reader.GetOrdinal("UpdatedAt")) ? DateTime.UtcNow : reader.GetDateTime("UpdatedAt"),
                         CreatedByName = $"{createdByFirstName} {createdByLastName}".Trim(),
-                        UpdatedByName = updatedByFirstName != null && updatedByLastName != null ? 
+                        UpdatedByName = updatedByFirstName != null && updatedByLastName != null ?
                                        $"{updatedByFirstName} {updatedByLastName}".Trim() : null
                     };
                     return Ok(category);
@@ -139,14 +141,15 @@ namespace crmApi.Controllers
                 await connection.OpenAsync();
 
                 string insertQuery = @"
-                    INSERT INTO UrunKategorileri (KategoriAdi, Stok, Fiyat, CreatedBy, CreatedAt, UpdatedAt)
-                    VALUES (@KategoriAdi, @Stok, @Fiyat, @CreatedBy, @CreatedAt, @UpdatedAt);
+                    INSERT INTO UrunKategorileri (KategoriAdi, Stok, Fiyat, CreatedBy, CreatedAt, UpdatedAt, Currency)
+                    VALUES (@KategoriAdi, @Stok, @Fiyat, @CreatedBy, @CreatedAt, @UpdatedAt, @Currency);
                     SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(insertQuery, connection);
                 command.Parameters.AddWithValue("@KategoriAdi", createDto.KategoriAdi);
                 command.Parameters.AddWithValue("@Stok", createDto.Stok ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@Fiyat", createDto.Fiyat);
+                command.Parameters.AddWithValue("@Currency", createDto.Currency ?? "TRY");
                 command.Parameters.AddWithValue("@CreatedBy", createDto.CreatedBy);
                 command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
@@ -192,6 +195,7 @@ namespace crmApi.Controllers
                     SET KategoriAdi = @KategoriAdi,
                         Stok = @Stok,
                         Fiyat = @Fiyat,
+                        Currency = @Currency,
                         UpdatedBy = @UpdatedBy,
                         UpdatedAt = @UpdatedAt
                     WHERE KategoriID = @Id";
@@ -201,6 +205,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@KategoriAdi", updateDto.KategoriAdi);
                 command.Parameters.AddWithValue("@Stok", updateDto.Stok ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@Fiyat", updateDto.Fiyat);
+                command.Parameters.AddWithValue("@Currency", updateDto.Currency ?? "TRY");
                 command.Parameters.AddWithValue("@UpdatedBy", updateDto.UpdatedBy);
                 command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
 
