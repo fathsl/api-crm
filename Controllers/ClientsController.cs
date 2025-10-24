@@ -31,7 +31,7 @@ namespace crmApi.Controllers
 
                 string query = @"
                                 SELECT c.Id, c.First_name, c.Last_name, c.Phone, c.Email, c.Details, 
-                                    c.Country, c.City, c.Address, c.ZipCode, c.VatNumber, c.ImageUrl,
+                                    c.Country, c.City, c.Address, c.ZipCode, c.VATNumber, c.ImageUrl,
                                     c.CreatedBy, c.CreatedAt, c.ModifiedBy, c.ModifiedAt,
                                     cu.Ad AS CreatedByUserName, cu.Soyad AS CreatedByUserSurname,
                                     uu.Ad AS ModifiedByUserName, uu.Soyad AS ModifiedByUserSurname
@@ -57,7 +57,7 @@ namespace crmApi.Controllers
                             City = reader.IsDBNull("City") ? null : reader.GetString("City"),
                             Address = reader.IsDBNull("Address") ? null : reader.GetString("Address"),
                             ZipCode = reader.IsDBNull("ZipCode") ? null : reader.GetString("ZipCode"),
-                            VATNumber = reader.IsDBNull("VatNumber") ? null : reader.GetString("VatNumber"),
+                            VATNumber = reader.IsDBNull("VATNumber") ? null : reader.GetString("VATNumber"),
                             ImageUrl = reader.IsDBNull("ImageUrl") ? null : reader.GetString("ImageUrl"),
                             CreatedBy = reader.IsDBNull("CreatedBy") ? null : reader.GetInt32("CreatedBy"),
                             CreatedAt = reader.GetDateTime("CreatedAt"),

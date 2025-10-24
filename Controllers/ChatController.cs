@@ -250,6 +250,99 @@ namespace crmApi.Controllers
             }
         }
 
+        [HttpGet("discussions/detail/{discussionId}")]
+        public async Task<ActionResult<DiscussionResponse>> GetDiscussionById(int discussionId, [FromQuery] int userId)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                string query = @"
+            SELECT DISTINCT d.Id, d.Title, d.Description, d.Status, d.CreatedByUserId, 
+                   d.CreatedAt, d.ClientId, d.IsSeen, d.UpdatedAt,
+                   COALESCE(d.SenderId, cm.SenderId) as SenderId, 
+                   COALESCE(d.ReceiverId, cm.ReceiverId) as ReceiverId,
+                   lt.Status as LastTaskStatus,
+                   sender.KullaniciAdi as SenderName, 
+                   receiver.KullaniciAdi as ReceiverName,
+                   creator.KullaniciAdi as CreatorName
+            FROM Discussions d
+            LEFT JOIN ChatMessages cm ON d.Id = cm.DiscussionId
+            LEFT JOIN KullaniciBilgileri sender ON COALESCE(d.SenderId, cm.SenderId) = sender.KullaniciID
+            LEFT JOIN KullaniciBilgileri receiver ON COALESCE(d.ReceiverId, cm.ReceiverId) = receiver.KullaniciID
+            LEFT JOIN KullaniciBilgileri creator ON d.CreatedByUserId = creator.KullaniciID
+            LEFT JOIN (
+                SELECT cm1.DiscussionId, t1.Status
+                FROM ChatMessages cm1
+                INNER JOIN Tasks t1 ON cm1.TaskId = t1.Id
+                WHERE cm1.TaskId IS NOT NULL
+                AND cm1.Id = (
+                    SELECT cm2.Id 
+                    FROM ChatMessages cm2 
+                    WHERE cm2.DiscussionId = cm1.DiscussionId 
+                    AND cm2.TaskId IS NOT NULL
+                    ORDER BY cm2.CreatedAt DESC 
+                    LIMIT 1
+                )
+            ) lt ON d.Id = lt.DiscussionId
+            WHERE d.Id = @discussionId";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@discussionId", discussionId);
+
+                using var reader = await command.ExecuteReaderAsync();
+
+                if (!await reader.ReadAsync())
+                {
+                    return NotFound(new { message = "Discussion not found" });
+                }
+
+                crmApi.Models.TaskStatus? lastTaskStatus = null;
+                if (reader["LastTaskStatus"] != DBNull.Value)
+                {
+                    if (Enum.TryParse<crmApi.Models.TaskStatus>(reader["LastTaskStatus"].ToString(), out crmApi.Models.TaskStatus status))
+                    {
+                        lastTaskStatus = status;
+                    }
+                }
+
+                byte discussionStatus = 0;
+                if (reader["Status"] != DBNull.Value)
+                {
+                    discussionStatus = Convert.ToByte(reader["Status"]);
+                }
+
+                var discussion = new DiscussionResponse
+                {
+                    Id = Convert.ToInt32(reader["Id"]),
+                    Title = reader["Title"].ToString() ?? "",
+                    Description = reader["Description"].ToString() ?? "",
+                    CreatedByUserId = Convert.ToInt32(reader["CreatedByUserId"]),
+                    CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                    UpdatedAt = reader["UpdatedAt"] != DBNull.Value
+                        ? Convert.ToDateTime(reader["UpdatedAt"])
+                        : (DateTime?)null,
+                    SenderId = reader["SenderId"] != DBNull.Value ? Convert.ToInt32(reader["SenderId"]) : 0,
+                    ReceiverId = reader["ReceiverId"] != DBNull.Value ? Convert.ToInt32(reader["ReceiverId"]) : 0,
+                    SenderName = reader["SenderName"]?.ToString() ?? "",
+                    ReceiverName = reader["ReceiverName"]?.ToString() ?? "",
+                    CreatorName = reader["CreatorName"]?.ToString() ?? "",
+                    IsSeen = reader.IsDBNull("IsSeen") ? false : reader.GetBoolean("IsSeen"),
+                    Status = discussionStatus,
+                    ClientId = reader["ClientId"] != DBNull.Value ? Convert.ToInt32(reader["ClientId"]) : (int?)null,
+                    LastTaskStatus = lastTaskStatus
+                };
+
+                return Ok(discussion);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching discussion {DiscussionId}", discussionId);
+                return StatusCode(500, new { message = "Error fetching discussion", error = ex.Message });
+            }
+        }
+
         [HttpGet("discussions/admin/{currentUserId}/{selectedUserId}")]
         public async Task<ActionResult<List<DiscussionResponse>>> GetAdminUserDiscussions(int currentUserId, int selectedUserId)
         {
