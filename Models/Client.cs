@@ -16,11 +16,15 @@ namespace crmApi.Models
         public string? Address { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public int? CreatedBy { get; set; }
+        public string? Platform { get; set; }
+        public DateTime? RequestedDate { get; set; }
+        public string? Progress { get; set; }
+        public List<int>? CategoryIds { get; set; }
         public string? ZipCode { get; set; }
         public string? VATNumber { get; set; }
         public string? ImageUrl { get; set; }
         public int? projectId { get; set; }
-        public DateTime ModifiedAt { get; set; } = DateTime.Now;
+        public DateTime? ModifiedAt { get; set; } = DateTime.Now;
         public int? ModifiedBy { get; set; }
 
         public ICollection<ClientProject> ClientProjects { get; set; } = new List<ClientProject>();
@@ -109,6 +113,10 @@ namespace crmApi.Models
         public string? Country { get; set; }
         public string? City { get; set; }
         public string? Address { get; set; }
+        public string? Platform { get; set; }
+        public string? Progress { get; set; }
+        public DateTime? RequestedDate { get; set; }
+        public List<int>? categoryIds { get; set; }
         public List<int>? projectIds { get; set; }
         public DateTime CreatedAt { get; set; }
     }
