@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using MySql.Data.MySqlClient;
 using crmApi.Models;
 using System.Data;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 
 namespace crmApi.Controllers
 {
@@ -56,6 +58,7 @@ namespace crmApi.Controllers
                         UpdatedBy = reader.IsDBNull(reader.GetOrdinal("UpdatedBy")) ? null : reader.GetInt32("UpdatedBy"),
                         CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt")) ? DateTime.UtcNow : reader.GetDateTime("CreatedAt"),
                         UpdatedAt = reader.IsDBNull(reader.GetOrdinal("UpdatedAt")) ? DateTime.UtcNow : reader.GetDateTime("UpdatedAt"),
+                        ImageUrl = reader.IsDBNull(reader.GetOrdinal("ImageUrl")) ? null : reader.GetString("ImageUrl"),
                         CreatedByName = $"{createdByFirstName} {createdByLastName}".Trim(),
                         UpdatedByName = updatedByFirstName != null && updatedByLastName != null ?
                                        $"{updatedByFirstName} {updatedByLastName}".Trim() : null
@@ -107,6 +110,7 @@ namespace crmApi.Controllers
                         Stok = reader.IsDBNull(reader.GetOrdinal("Stok")) ? null : reader.GetInt32("Stok"),
                         Fiyat = reader.IsDBNull(reader.GetOrdinal("Fiyat")) ? 0 : reader.GetDecimal("Fiyat"),
                         Currency = reader.IsDBNull(reader.GetOrdinal("Currency")) ? "TRY" : reader.GetString("Currency"),
+                        ImageUrl = reader.IsDBNull(reader.GetOrdinal("ImageUrl")) ? null : reader.GetString("ImageUrl"),
                         CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? 0 : reader.GetInt32("CreatedBy"),
                         UpdatedBy = reader.IsDBNull(reader.GetOrdinal("UpdatedBy")) ? null : reader.GetInt32("UpdatedBy"),
                         CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt")) ? DateTime.UtcNow : reader.GetDateTime("CreatedAt"),
@@ -128,7 +132,7 @@ namespace crmApi.Controllers
 
         // POST: api/Categories
         [HttpPost]
-        public async Task<ActionResult<CategoryResponseDto>> CreateCategory([FromBody] CreateCategoryDto createDto)
+        public async Task<ActionResult<CategoryResponseDto>> CreateCategory([FromForm] CreateCategoryDto createDto)
         {
             if (!ModelState.IsValid)
             {
@@ -137,12 +141,31 @@ namespace crmApi.Controllers
 
             try
             {
+                string? imageUrl = null;
+
+                if (createDto.Image != null && createDto.Image.Length > 0)
+                {
+                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+                    var extension = Path.GetExtension(createDto.Image.FileName).ToLowerInvariant();
+                    
+                    if (!allowedExtensions.Contains(extension))
+                    {
+                        return BadRequest(new { message = "Invalid file type. Only image files are allowed." });
+                    }
+
+                    if (createDto.Image.Length > 5 * 1024 * 1024)
+                    {
+                        return BadRequest(new { message = "File size exceeds 5MB limit." });
+                    }
+
+                    imageUrl = await UploadToCloudinary(createDto.Image, createDto.Image.FileName);
+                }
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
                 string insertQuery = @"
-                    INSERT INTO UrunKategorileri (KategoriAdi, Stok, Fiyat, CreatedBy, CreatedAt, UpdatedAt, Currency)
-                    VALUES (@KategoriAdi, @Stok, @Fiyat, @CreatedBy, @CreatedAt, @UpdatedAt, @Currency);
+                    INSERT INTO UrunKategorileri (KategoriAdi, Stok, Fiyat, CreatedBy, CreatedAt, UpdatedAt, Currency, ImageUrl)
+                    VALUES (@KategoriAdi, @Stok, @Fiyat, @CreatedBy, @CreatedAt, @UpdatedAt, @Currency, @ImageUrl);
                     SELECT LAST_INSERT_ID();";
 
                 using var command = new MySqlCommand(insertQuery, connection);
@@ -150,6 +173,7 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Stok", createDto.Stok ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@Fiyat", createDto.Fiyat);
                 command.Parameters.AddWithValue("@Currency", createDto.Currency ?? "TRY");
+                command.Parameters.AddWithValue("@ImageUrl", imageUrl ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@CreatedBy", createDto.CreatedBy);
                 command.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
                 command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
@@ -167,7 +191,8 @@ namespace crmApi.Controllers
 
         // PUT: api/Categories/{id}
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateCategory(int id, [FromBody] UpdateCategoryDto updateDto)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UpdateCategory(int id, [FromForm] UpdateCategoryDto updateDto)
         {
             if (!ModelState.IsValid)
             {
@@ -179,15 +204,41 @@ namespace crmApi.Controllers
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
-                string checkQuery = "SELECT COUNT(*) FROM UrunKategorileri WHERE KategoriID = @Id";
+                string checkQuery = "SELECT ImageUrl FROM UrunKategorileri WHERE KategoriID = @Id";
+                string? existingImageUrl = null;
+
                 using (var checkCommand = new MySqlCommand(checkQuery, connection))
                 {
                     checkCommand.Parameters.AddWithValue("@Id", id);
-                    var count = Convert.ToInt32(await checkCommand.ExecuteScalarAsync());
-                    if (count == 0)
+                    var result = await checkCommand.ExecuteScalarAsync();
+                    
+                    if (result == null)
                     {
                         return NotFound(new { message = "Category not found" });
                     }
+
+                    existingImageUrl = result == DBNull.Value ? null : result.ToString();
+                }
+
+                string? imageUrl = existingImageUrl;
+
+                if (updateDto.Image != null && updateDto.Image.Length > 0)
+                {
+                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+                    var extension = Path.GetExtension(updateDto.Image.FileName).ToLowerInvariant();
+                    
+                    if (!allowedExtensions.Contains(extension))
+                    {
+                        return BadRequest(new { message = "Invalid file type. Only image files are allowed." });
+                    }
+
+                    if (updateDto.Image.Length > 5 * 1024 * 1024)
+                    {
+                        return BadRequest(new { message = "File size exceeds 5MB limit." });
+                    }
+
+                    imageUrl = await UploadToCloudinary(updateDto.Image, updateDto.Image.FileName);
+
                 }
 
                 string updateQuery = @"
@@ -196,6 +247,7 @@ namespace crmApi.Controllers
                         Stok = @Stok,
                         Fiyat = @Fiyat,
                         Currency = @Currency,
+                        ImageUrl = @ImageUrl,
                         UpdatedBy = @UpdatedBy,
                         UpdatedAt = @UpdatedAt
                     WHERE KategoriID = @Id";
@@ -206,12 +258,13 @@ namespace crmApi.Controllers
                 command.Parameters.AddWithValue("@Stok", updateDto.Stok ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@Fiyat", updateDto.Fiyat);
                 command.Parameters.AddWithValue("@Currency", updateDto.Currency ?? "TRY");
+                command.Parameters.AddWithValue("@ImageUrl", imageUrl ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("@UpdatedBy", updateDto.UpdatedBy);
                 command.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
 
                 await command.ExecuteNonQueryAsync();
 
-                return NoContent();
+                return Ok(new { message = "Category updated successfully", ImageUrl = imageUrl });
             }
             catch (Exception ex)
             {
@@ -251,5 +304,45 @@ namespace crmApi.Controllers
                 return StatusCode(500, new { message = "Error deleting category", error = ex.Message });
             }
         }
+
+        private async Task<string> UploadToCloudinary(IFormFile file, string fileName)
+        {
+            try
+            {
+                var cloudName = Environment.GetEnvironmentVariable("CLOUDINARY_CLOUD_NAME");
+                var apiKey = Environment.GetEnvironmentVariable("CLOUDINARY_API_KEY");
+                var apiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
+
+                if (string.IsNullOrEmpty(cloudName) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+                {
+                    throw new Exception("Cloudinary credentials not configured");
+                }
+
+                var account = new Account(cloudName, apiKey, apiSecret);
+                var cloudinary = new Cloudinary(account);
+
+                using var stream = file.OpenReadStream();
+                var uploadParams = new ImageUploadParams()
+                {
+                    File = new FileDescription(fileName, stream),
+                    PublicId = $"category-images/{DateTime.Now:yyyy/MM/dd}/{Guid.NewGuid()}_{Path.GetFileNameWithoutExtension(fileName)}",
+                    Transformation = new Transformation().Quality("auto").FetchFormat("auto")
+                };
+
+                var uploadResult = await cloudinary.UploadAsync(uploadParams);
+
+                if (uploadResult.Error != null)
+                {
+                    throw new Exception($"Cloudinary upload failed: {uploadResult.Error.Message}");
+                }
+
+                return uploadResult.SecureUrl.ToString();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Image upload failed: {ex.Message}", ex);
+            }
+        }
+
     }
 }

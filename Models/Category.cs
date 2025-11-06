@@ -28,6 +28,7 @@ namespace crmApi.Models
         public DateTime UpdatedAt { get; set; }
         public string? CreatedByName { get; set; }
         public string? UpdatedByName { get; set; }
+        public string? ImageUrl { get; set; }
     }
 
     public class CategoryDetailDto
@@ -43,6 +44,7 @@ namespace crmApi.Models
         public DateTime UpdatedAt { get; set; }
         public string? CreatedByName { get; set; }
         public string? UpdatedByName { get; set; }
+        public string? ImageUrl { get; set; }
     }
 
     public class CreateCategoryDto
@@ -52,6 +54,7 @@ namespace crmApi.Models
         public string? Currency { get; set; } = "TRY";
         public decimal Fiyat { get; set; }
         public int CreatedBy { get; set; }
+        public IFormFile? Image { get; set; }
     }
 
     public class UpdateCategoryDto
@@ -61,6 +64,7 @@ namespace crmApi.Models
         public decimal Fiyat { get; set; }
         public string? Currency { get; set; } = "TRY";
         public int UpdatedBy { get; set; }
+        public IFormFile? Image { get; set; }
     }
 
 }
